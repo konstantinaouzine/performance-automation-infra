@@ -20,6 +20,7 @@ jobs:
     env:
       # Use GitHub expression so путь разворачивается корректно, не буквальная строка
       LOGS_DIR: ${{ github.workspace }}/jmeter_logs
+      HAS_SMTP: ${{ (secrets.SMTP_SERVER != '' && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '') && 'yes' || 'no' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -216,7 +217,7 @@ jobs:
           curl -s -H 'Content-Type: application/json' -d @payload.json "$TEAMS_WEBHOOK" || echo 'Teams webhook post failed'
 
       - name: Email report
-        if: ${{ always() && github.event.inputs.email_to != '' && secrets.SMTP_SERVER != '' && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '' }}
+        if: ${{ always() && github.event.inputs.email_to != '' && env.HAS_SMTP == 'yes' }}
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
