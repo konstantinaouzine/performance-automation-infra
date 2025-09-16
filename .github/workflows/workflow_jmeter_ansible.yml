@@ -1,5 +1,5 @@
-name: workflow_jmeter_ansible
-run-name: "JMeter: ${{ inputs.test_file || 'test_app_load_only.jmx' }}"
+name: Load Test - JMeter Ansible
+run-name: "JMeter: ${{ github.event.inputs.test_file || 'test_app_load_only.jmx' }}"
 
 on:
   workflow_dispatch:
