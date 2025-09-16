@@ -29,14 +29,10 @@
     jmeter_pvc_name: jmeter-artifacts
     jmeter_pvc_storage: 1Gi
   pre_tasks:
-    - name: Derive effective JMeter test file name (do not override extra var)
+    - name: Normalize JMeter test file (ensure single .jmx) and path
       set_fact:
-        jmeter_test_file_effective: >-
-          {{ (jmeter_test_file | default('test.jmx')) if (jmeter_test_file | default('test.jmx')) | regex_search('\\.jmx$') else ( (jmeter_test_file | default('test.jmx')) + '.jmx') }}
-
-    - name: Recompute test plan path using effective filename
-      set_fact:
-        jmeter_testplan_path: "/home/kostaharman/ansible_jmeter/tests/{{ jmeter_test_file_effective }}"
+        jmeter_test_file_effective: "{{ (jmeter_test_file | default('test')) | regex_replace('\\.jmx$','') }}.jmx"
+        jmeter_testplan_path: "/home/kostaharman/ansible_jmeter/tests/{{ (jmeter_test_file | default('test')) | regex_replace('\\.jmx$','') }}.jmx"
 
     - name: Collect available JMX files
       set_fact:

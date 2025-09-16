@@ -1,0 +1,84 @@
+name: jmeter_ansible
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_file:
+        description: 'Имя JMX файла (без пути, можно без .jmx)'
+        required: true
+        default: 'test_app_load_only.jmx'
+
+jobs:
+  run-ansible-jmeter:
+    runs-on: self-hosted
+    timeout-minutes: 40
+    env:
+      LOGS_DIR: ${GITHUB_WORKSPACE}/jmeter_logs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure Ansible
+        run: |
+          if ! command -v ansible-playbook >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y ansible python3-jmespath
+          fi
+          ansible --version
+
+      - name: Ensure kubectl
+        run: |
+          if ! command -v kubectl >/dev/null 2>&1; then
+            curl -sLO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/
+          fi
+          kubectl version --client --output=yaml || true
+
+      - name: Run Ansible JMeter playbook
+        id: ansible_run
+        run: |
+          set -e
+          TEST_FILE="${{ github.event.inputs.test_file }}"
+          if [[ "$TEST_FILE" != *.jmx ]]; then TEST_FILE="${TEST_FILE}.jmx"; fi
+          mkdir -p "$LOGS_DIR"
+          ansible-playbook ansible_jmeter/jmeter_play.yml \
+            -e jmeter_test_file="$TEST_FILE" \
+            -e jmeter_local_logs_dir="$LOGS_DIR" || { echo 'Playbook failed'; exit 1; }
+
+      - name: Locate latest run directory
+        id: locate
+        run: |
+          set -e
+          if [ ! -d "$LOGS_DIR" ]; then echo "No logs dir" >&2; exit 1; fi
+          LATEST=$(ls -1dt "$LOGS_DIR"/*/ 2>/dev/null | head -1 | sed 's:/*$::')
+          echo "Latest run dir: $LATEST"
+          echo "latest_dir=$LATEST" >> $GITHUB_OUTPUT
+          ls -1 "$LATEST" || true
+
+      - name: SLA & summary
+        run: |
+          LATEST='${{ steps.locate.outputs.latest_dir }}'
+          if [ -z "$LATEST" ] || [ ! -d "$LATEST" ]; then echo 'No run dir'; exit 1; fi
+          JTL="$LATEST/results.jtl"
+          if [ ! -f "$JTL" ]; then echo 'No results.jtl found'; exit 1; fi
+          echo '--- LAST 10 LINES ---'
+          tail -n 10 "$JTL" || true
+          TOTAL=$(grep -c '<sample ' "$JTL" || echo 0)
+          ERR=$(grep -c 's="false"' "$JTL" || echo 0)
+          PCT=$(awk -v e=$ERR -v t=$TOTAL 'BEGIN{ if(t==0){print 0}else{printf "%.2f", (e/t*100)} }')
+          echo "Samples: $TOTAL Errors: $ERR ($PCT%)"
+          if [ $(echo "$PCT > 5" | bc -l) -eq 1 ]; then
+            echo "SLA FAIL >5% errors" >&2; exit 1; fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jmeter-ansible-run
+          path: |
+            ${{ steps.locate.outputs.latest_dir }}/results.jtl
+            ${{ steps.locate.outputs.latest_dir }}/jmeter.log
+            ${{ steps.locate.outputs.latest_dir }}
+
+      - name: Finish
+        run: echo "Done."
