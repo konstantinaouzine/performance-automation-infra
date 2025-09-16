@@ -170,6 +170,13 @@ jobs:
             echo "format=$FORMAT"
           } > "$GITHUB_OUTPUT"
 
+          # Sanitize: keep only valid key=value lines (defensive against stray output)
+          TMP_SAN=$(mktemp)
+          grep -E '^[A-Za-z0-9_]+=' "$GITHUB_OUTPUT" > "$TMP_SAN" || true
+          mv "$TMP_SAN" "$GITHUB_OUTPUT"
+          echo '--- GITHUB_OUTPUT CONTENT ---'
+          cat "$GITHUB_OUTPUT"
+
           # SLA: fail if >5% (same reversed awk exit logic)
           if awk -v p="$PCT" 'BEGIN{exit (p>5)?0:1}'; then
             echo 'SLA FAIL >5% errors' >&2
@@ -177,43 +184,6 @@ jobs:
           else
             echo 'SLA OK'
           fi
-
-      - name: Notify Teams (success)
-        if: ${{ success() }}
-        env:
-          TEAMS_WEBHOOK: ${{ secrets.TEAMS_WEBHOOK }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TOTAL: ${{ steps.sla.outputs.total }}
-          ERRORS: ${{ steps.sla.outputs.errors }}
-          ERROR_PCT: ${{ steps.sla.outputs.error_pct }}
-        run: |
-          if [ -z "$TEAMS_WEBHOOK" ]; then echo 'No TEAMS_WEBHOOK secret set, skipping.'; exit 0; fi
-          cat > payload.json <<EOF
-          {
-            "@type": "MessageCard",
-            "@context": "http://schema.org/extensions",
-            "summary": "JMeter Load Test Result",
-            "themeColor": "2EB886",
-            "title": "JMeter Load Test: SUCCESS",
-            "sections": [{
-               "facts": [
-                 {"name": "Repo", "value": "${{ github.repository }}"},
-                 {"name": "Workflow", "value": "${{ github.workflow }}"},
-                 {"name": "Run", "value": "#${{ github.run_number }}"},
-                 {"name": "Samples", "value": "$TOTAL"},
-                 {"name": "Errors", "value": "$ERRORS"},
-                 {"name": "Error %", "value": "$ERROR_PCT"}
-               ],
-               "text": "SLA OK (<=5% errors)."
-            }],
-            "potentialAction": [{
-               "@type": "OpenUri",
-               "name": "View Run",
-               "targets": [{"os": "default", "uri": "$RUN_URL"}]
-            }]
-          }
-          EOF
-          curl -s -H 'Content-Type: application/json' -d @payload.json "$TEAMS_WEBHOOK" || echo 'Teams webhook post failed'
 
       - name: Email report
         if: ${{ always() && github.event.inputs.email_to != '' && env.HAS_SMTP == 'yes' }}
