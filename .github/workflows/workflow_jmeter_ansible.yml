@@ -13,7 +13,8 @@ jobs:
     runs-on: [self-hosted, ansible, jmeter]
     timeout-minutes: 40
     env:
-      LOGS_DIR: ${GITHUB_WORKSPACE}/jmeter_logs
+      # Use GitHub expression so путь разворачивается корректно, не буквальная строка
+      LOGS_DIR: ${{ github.workspace }}/jmeter_logs
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,14 +55,30 @@ jobs:
         id: ansible_run
         run: |
           set -e
-            TEST_FILE="${{ github.event.inputs.test_file }}"
-            if [[ "$TEST_FILE" != *.jmx ]]; then TEST_FILE="${TEST_FILE}.jmx"; fi
-            mkdir -p "$LOGS_DIR"
-            # Удалим прошлый Job с тем же префиксом (если остался Completed) чтобы гарантировать новый запуск
-            kubectl delete job -n load -l app=jmeter-loadgen --ignore-not-found || true
-            ansible-playbook ansible_jmeter/jmeter_play.yml \
-              -e jmeter_test_file="$TEST_FILE" \
-              -e jmeter_local_logs_dir="$LOGS_DIR" || { echo 'Playbook failed'; exit 1; }
+          TEST_FILE="${{ github.event.inputs.test_file }}"
+          if [[ "$TEST_FILE" != *.jmx ]]; then TEST_FILE="${TEST_FILE}.jmx"; fi
+          mkdir -p "$LOGS_DIR"
+          echo "Using LOGS_DIR=$LOGS_DIR"
+          kubectl delete job -n load -l app=jmeter-loadgen --ignore-not-found || true
+          ansible-playbook ansible_jmeter/jmeter_play.yml \
+            -e jmeter_test_file="$TEST_FILE" \
+            -e jmeter_local_logs_dir="$LOGS_DIR" || { echo 'Playbook failed'; exit 1; }
+          echo 'After playbook directory tree:'
+          find "$LOGS_DIR" -maxdepth 2 -type f -name run.meta -printf 'META %p\n' || true
+
+      - name: Discover run dir from metadata (fallback)
+        id: discover
+        run: |
+          set -e
+          if [ ! -d "$LOGS_DIR" ]; then echo 'No logs dir (discover)'; exit 0; fi
+          META=$(find "$LOGS_DIR" -maxdepth 2 -type f -name run.meta | head -1 || true)
+          if [ -n "$META" ]; then
+            RUN_DIR=$(dirname "$META")
+            echo "Found run dir via run.meta: $RUN_DIR"
+            echo "latest_dir=$RUN_DIR" >> $GITHUB_OUTPUT
+          else
+            echo 'No run.meta found yet'
+          fi
 
       - name: Locate latest run directory
         id: locate
@@ -70,7 +87,12 @@ jobs:
           if [ ! -d "$LOGS_DIR" ]; then echo "No logs dir" >&2; exit 1; fi
           echo 'Existing entries:'
           ls -l "$LOGS_DIR" || true
-          LATEST=$(ls -1dt "$LOGS_DIR"/*/ 2>/dev/null | head -1 | sed 's:/*$::')
+          # Prefer metadata-derived value first
+          if [ -n "${{ steps.discover.outputs.latest_dir }}" ]; then
+            LATEST='${{ steps.discover.outputs.latest_dir }}'
+          else
+            LATEST=$(ls -1dt "$LOGS_DIR"/*/ 2>/dev/null | head -1 | sed 's:/*$::')
+          fi
           # Fallback to symlink 'latest'
           if [ -z "$LATEST" ] && [ -L "$LOGS_DIR/latest" ]; then
             LATEST=$(readlink -f "$LOGS_DIR/latest")
@@ -82,7 +104,7 @@ jobs:
           echo "Latest run dir: $LATEST"
           echo "latest_dir=$LATEST" >> $GITHUB_OUTPUT
           ls -1 "$LATEST" || true
-
+          
       - name: SLA & summary
         run: |
           LATEST='${{ steps.locate.outputs.latest_dir }}'
@@ -95,8 +117,12 @@ jobs:
           ERR=$(grep -c 's="false"' "$JTL" || echo 0)
           PCT=$(awk -v e=$ERR -v t=$TOTAL 'BEGIN{ if(t==0){print 0}else{printf "%.2f", (e/t*100)} }')
           echo "Samples: $TOTAL Errors: $ERR ($PCT%)"
-          if [ $(echo "$PCT > 5" | bc -l) -eq 1 ]; then
-            echo "SLA FAIL >5% errors" >&2; exit 1; fi
+          # SLA check via awk (без зависимости от bc)
+          if awk -v p="$PCT" 'BEGIN{exit !(p>5)}'; then
+            echo 'SLA FAIL >5% errors' >&2; exit 1;
+          else
+            echo 'SLA OK';
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
