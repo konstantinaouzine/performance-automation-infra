@@ -104,24 +104,30 @@ jobs:
           echo "Latest run dir: $LATEST"
           echo "latest_dir=$LATEST" >> $GITHUB_OUTPUT
           ls -1 "$LATEST" || true
-          
+
       - name: SLA & summary
         run: |
+          set -euo pipefail
           LATEST='${{ steps.locate.outputs.latest_dir }}'
           if [ -z "$LATEST" ] || [ ! -d "$LATEST" ]; then echo 'No run dir'; exit 1; fi
           JTL="$LATEST/results.jtl"
           if [ ! -f "$JTL" ]; then echo 'No results.jtl found'; exit 1; fi
+          echo "Using LATEST=$LATEST"
           echo '--- LAST 10 LINES ---'
           tail -n 10 "$JTL" || true
           TOTAL=$(grep -c '<sample ' "$JTL" || echo 0)
           ERR=$(grep -c 's="false"' "$JTL" || echo 0)
-          PCT=$(awk -v e=$ERR -v t=$TOTAL 'BEGIN{ if(t==0){print 0}else{printf "%.2f", (e/t*100)} }')
-          echo "Samples: $TOTAL Errors: $ERR ($PCT%)"
-          # SLA check via awk (без зависимости от bc)
-          if awk -v p="$PCT" 'BEGIN{exit !(p>5)}'; then
-            echo 'SLA FAIL >5% errors' >&2; exit 1;
+          if [ "$TOTAL" -eq 0 ]; then
+            PCT="0.00"
           else
-            echo 'SLA OK';
+            PCT=$(awk -v e="$ERR" -v t="$TOTAL" 'BEGIN{printf "%.2f", (e/t*100)}')
+          fi
+          echo "Samples: $TOTAL Errors: $ERR ($PCT%)"
+          # SLA: fail if >5%
+          if awk -v p="$PCT" 'BEGIN{exit (p>5)?0:1}'; then
+            echo 'SLA FAIL >5% errors' >&2; exit 1
+          else
+            echo 'SLA OK'
           fi
 
       - name: Upload artifacts
