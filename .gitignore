@@ -12,6 +12,7 @@
 !springboot-postgres/
 !helm/
 !helm-charts/
+!scripts/
 
 # CI / служебные
 !.github/
