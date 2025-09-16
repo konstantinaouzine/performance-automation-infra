@@ -215,43 +215,6 @@ jobs:
           EOF
           curl -s -H 'Content-Type: application/json' -d @payload.json "$TEAMS_WEBHOOK" || echo 'Teams webhook post failed'
 
-      - name: Notify Teams (failure)
-        if: ${{ failure() }}
-        env:
-          TEAMS_WEBHOOK: ${{ secrets.TEAMS_WEBHOOK }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TOTAL: ${{ steps.sla.outputs.total }}
-          ERRORS: ${{ steps.sla.outputs.errors }}
-          ERROR_PCT: ${{ steps.sla.outputs.error_pct }}
-        run: |
-          if [ -z "$TEAMS_WEBHOOK" ]; then echo 'No TEAMS_WEBHOOK secret set, skipping.'; exit 0; fi
-          cat > payload.json <<EOF
-          {
-            "@type": "MessageCard",
-            "@context": "http://schema.org/extensions",
-            "summary": "JMeter Load Test Result",
-            "themeColor": "C0382B",
-            "title": "JMeter Load Test: FAILURE",
-            "sections": [{
-               "facts": [
-                 {"name": "Repo", "value": "${{ github.repository }}"},
-                 {"name": "Workflow", "value": "${{ github.workflow }}"},
-                 {"name": "Run", "value": "#${{ github.run_number }}"},
-                 {"name": "Samples", "value": "$TOTAL"},
-                 {"name": "Errors", "value": "$ERRORS"},
-                 {"name": "Error %", "value": "$ERROR_PCT"}
-               ],
-               "text": "SLA FAIL (>5% errors)."
-            }],
-            "potentialAction": [{
-               "@type": "OpenUri",
-               "name": "View Run",
-               "targets": [{"os": "default", "uri": "$RUN_URL"}]
-            }]
-          }
-          EOF
-          curl -s -H 'Content-Type: application/json' -d @payload.json "$TEAMS_WEBHOOK" || echo 'Teams webhook post failed'
-
       - name: Email report
         if: ${{ always() && github.event.inputs.email_to != '' && secrets.SMTP_SERVER != '' && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '' }}
         uses: dawidd6/action-send-mail@v3
