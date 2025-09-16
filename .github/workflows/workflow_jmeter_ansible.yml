@@ -4,9 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       test_file:
-        description: 'Имя JMX файла (без пути, можно без .jmx)'
+        description: 'JMX file name (with no path, can be without extension)'
         required: true
         default: 'test_app_load_only.jmx'
+      email_to:
+        description: 'Emails for report (use comma)'
+        required: false
+        default: ''
 
 jobs:
   run-ansible-jmeter:
@@ -106,6 +110,7 @@ jobs:
           ls -1 "$LATEST" || true
 
       - name: SLA & summary
+        id: sla
         run: |
           set -euo pipefail
           LATEST='${{ steps.locate.outputs.latest_dir }}'
@@ -157,10 +162,123 @@ jobs:
           echo "Samples: $TOTAL Errors: $ERR ($PCT%)"
           # SLA: fail if >5%
           if awk -v p="$PCT" 'BEGIN{exit (p>5)?0:1}'; then
-            echo 'SLA FAIL >5% errors' >&2; exit 1
+            echo 'SLA FAIL >5% errors' >&2
+            # publish outputs before exit
+            echo "total=$TOTAL" >> $GITHUB_OUTPUT
+            echo "errors=$ERR" >> $GITHUB_OUTPUT
+            echo "error_pct=$PCT" >> $GITHUB_OUTPUT
+            echo "format=$FORMAT" >> $GITHUB_OUTPUT
+            exit 1
           else
             echo 'SLA OK'
+            echo "total=$TOTAL" >> $GITHUB_OUTPUT
+            echo "errors=$ERR" >> $GITHUB_OUTPUT
+            echo "error_pct=$PCT" >> $GITHUB_OUTPUT
+            echo "format=$FORMAT" >> $GITHUB_OUTPUT
           fi
+
+      - name: Notify Teams (success)
+        if: ${{ success() }}
+        env:
+          TEAMS_WEBHOOK: ${{ secrets.TEAMS_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TOTAL: ${{ steps.sla.outputs.total }}
+          ERRORS: ${{ steps.sla.outputs.errors }}
+          ERROR_PCT: ${{ steps.sla.outputs.error_pct }}
+        run: |
+          if [ -z "$TEAMS_WEBHOOK" ]; then echo 'No TEAMS_WEBHOOK secret set, skipping.'; exit 0; fi
+          cat > payload.json <<EOF
+          {
+            "@type": "MessageCard",
+            "@context": "http://schema.org/extensions",
+            "summary": "JMeter Load Test Result",
+            "themeColor": "2EB886",
+            "title": "JMeter Load Test: SUCCESS",
+            "sections": [{
+               "facts": [
+                 {"name": "Repo", "value": "${{ github.repository }}"},
+                 {"name": "Workflow", "value": "${{ github.workflow }}"},
+                 {"name": "Run", "value": "#${{ github.run_number }}"},
+                 {"name": "Samples", "value": "$TOTAL"},
+                 {"name": "Errors", "value": "$ERRORS"},
+                 {"name": "Error %", "value": "$ERROR_PCT"}
+               ],
+               "text": "SLA OK (<=5% errors)."
+            }],
+            "potentialAction": [{
+               "@type": "OpenUri",
+               "name": "View Run",
+               "targets": [{"os": "default", "uri": "$RUN_URL"}]
+            }]
+          }
+          EOF
+          curl -s -H 'Content-Type: application/json' -d @payload.json "$TEAMS_WEBHOOK" || echo 'Teams webhook post failed'
+
+      - name: Notify Teams (failure)
+        if: ${{ failure() }}
+        env:
+          TEAMS_WEBHOOK: ${{ secrets.TEAMS_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TOTAL: ${{ steps.sla.outputs.total }}
+          ERRORS: ${{ steps.sla.outputs.errors }}
+          ERROR_PCT: ${{ steps.sla.outputs.error_pct }}
+        run: |
+          if [ -z "$TEAMS_WEBHOOK" ]; then echo 'No TEAMS_WEBHOOK secret set, skipping.'; exit 0; fi
+          cat > payload.json <<EOF
+          {
+            "@type": "MessageCard",
+            "@context": "http://schema.org/extensions",
+            "summary": "JMeter Load Test Result",
+            "themeColor": "C0382B",
+            "title": "JMeter Load Test: FAILURE",
+            "sections": [{
+               "facts": [
+                 {"name": "Repo", "value": "${{ github.repository }}"},
+                 {"name": "Workflow", "value": "${{ github.workflow }}"},
+                 {"name": "Run", "value": "#${{ github.run_number }}"},
+                 {"name": "Samples", "value": "$TOTAL"},
+                 {"name": "Errors", "value": "$ERRORS"},
+                 {"name": "Error %", "value": "$ERROR_PCT"}
+               ],
+               "text": "SLA FAIL (>5% errors)."
+            }],
+            "potentialAction": [{
+               "@type": "OpenUri",
+               "name": "View Run",
+               "targets": [{"os": "default", "uri": "$RUN_URL"}]
+            }]
+          }
+          EOF
+          curl -s -H 'Content-Type: application/json' -d @payload.json "$TEAMS_WEBHOOK" || echo 'Teams webhook post failed'
+
+      - name: Email report
+        if: ${{ always() && github.event.inputs.email_to != '' && secrets.SMTP_SERVER != '' && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT || 587 }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "JMeter Load Test ${{ job.status }} | ${{ github.repository }} #${{ github.run_number }}"
+          to: ${{ github.event.inputs.email_to }}
+          from: ${{ secrets.SMTP_FROM || 'loadtest-bot@example.com' }}
+          secure: true
+          attachments: |
+            ${{ steps.locate.outputs.latest_dir }}/results.jtl
+            ${{ steps.locate.outputs.latest_dir }}/jmeter.log
+          body: |
+            Repository: ${{ github.repository }}
+            Workflow: ${{ github.workflow }}
+            Run: #${{ github.run_number }}
+            Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Status: ${{ job.status }}
+            Samples: ${{ steps.sla.outputs.total }}
+            Errors: ${{ steps.sla.outputs.errors }}
+            Error %: ${{ steps.sla.outputs.error_pct }}
+            Format: ${{ steps.sla.outputs.format }}
+
+            (Automated email)
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
