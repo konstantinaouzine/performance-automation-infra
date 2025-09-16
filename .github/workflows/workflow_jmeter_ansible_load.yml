@@ -162,21 +162,20 @@ jobs:
 
           echo "Format: $FORMAT Total=$TOTAL Errors=$ERR Error%=$PCT"
           echo "Samples: $TOTAL Errors: $ERR ($PCT%)"
-          # SLA: fail if >5%
+          # Write step outputs (overwrite to avoid stray lines)
+          {
+            echo "total=$TOTAL"
+            echo "errors=$ERR"
+            echo "error_pct=$PCT"
+            echo "format=$FORMAT"
+          } > "$GITHUB_OUTPUT"
+
+          # SLA: fail if >5% (same reversed awk exit logic)
           if awk -v p="$PCT" 'BEGIN{exit (p>5)?0:1}'; then
             echo 'SLA FAIL >5% errors' >&2
-            # publish outputs before exit
-            echo "total=$TOTAL" >> $GITHUB_OUTPUT
-            echo "errors=$ERR" >> $GITHUB_OUTPUT
-            echo "error_pct=$PCT" >> $GITHUB_OUTPUT
-            echo "format=$FORMAT" >> $GITHUB_OUTPUT
             exit 1
           else
             echo 'SLA OK'
-            echo "total=$TOTAL" >> $GITHUB_OUTPUT
-            echo "errors=$ERR" >> $GITHUB_OUTPUT
-            echo "error_pct=$PCT" >> $GITHUB_OUTPUT
-            echo "format=$FORMAT" >> $GITHUB_OUTPUT
           fi
 
       - name: Notify Teams (success)
