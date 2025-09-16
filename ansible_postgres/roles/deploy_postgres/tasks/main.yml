@@ -1,0 +1,9 @@
+---
+- name: Deploy PostgreSQL with Bitnami Helm chart
+  community.kubernetes.helm:
+    name: "{{ postgres_release_name }}"
+    chart_ref: "{{ postgres_chart_name }}"
+    namespace: "{{ postgres_namespace }}"
+    create_namespace: true
+    values: "{{ postgres_values }}"
+    state: present

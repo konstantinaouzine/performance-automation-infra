@@ -1,0 +1,28 @@
+---
+- name: Ensure otel-agent Service (OTLP gRPC/HTTP) exists
+  kubernetes.core.k8s:
+    state: present
+    namespace: monitoring
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: otel-agent
+        labels:
+          app.kubernetes.io/instance: otel-collector-ds
+          app.kubernetes.io/name: opentelemetry-collector
+          component: agent-collector
+      spec:
+        selector:
+          app.kubernetes.io/instance: otel-collector-ds
+          app.kubernetes.io/name: opentelemetry-collector
+          component: agent-collector
+        ports:
+          - name: otlp-grpc
+            port: 4317
+            targetPort: otlp
+            protocol: TCP
+          - name: otlp-http
+            port: 4318
+            targetPort: otlp-http
+            protocol: TCP

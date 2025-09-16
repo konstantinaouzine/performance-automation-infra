@@ -1,0 +1,19 @@
+---
+- name: Deploy Otel Collector Gateway (Deployment)
+  community.kubernetes.helm:
+    name: otel-collector-gateway
+    chart_ref: open-telemetry/opentelemetry-collector
+    namespace: monitoring
+    create_namespace: true
+    values:
+      mode: deployment
+      image:
+        repository: otel/opentelemetry-collector
+        tag: latest
+      config: "{{ lookup('file', 'otel-gateway-config.yaml') | from_yaml }}"
+    state: present
+
+- name: Create Service for gateway Prometheus metrics (8889)
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('file', role_path + '/files/metrics-service.yaml') | from_yaml }}"

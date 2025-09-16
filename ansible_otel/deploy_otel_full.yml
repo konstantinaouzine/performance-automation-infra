@@ -1,0 +1,6 @@
+---
+- hosts: localhost
+  gather_facts: false
+  roles:
+    - role: deploy_otel_collector
+    - role: deploy_otel_gateway

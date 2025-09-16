@@ -1,0 +1,20 @@
+---
+- name: Deploy Spring Boot app with Helm
+  community.kubernetes.helm:
+    name: "{{ helm_release_name }}"
+    chart_ref: "{{ helm_chart_path }}"
+    namespace: "{{ helm_namespace }}"
+    create_namespace: true
+    wait: true
+    timeout: 300s
+    values_files:
+      - "{{ helm_chart_path }}/values.yaml"
+    values:
+      image:
+        repository: "{{ springboot_image_name }}"
+        tag: "{{ springboot_image_tag }}"
+      fullnameOverride: "{{ helm_release_name }}"
+      env:
+        OTEL_RESOURCE_ATTRIBUTES: "service.name={{ otel_service_name }},service.namespace={{ otel_namespace }},service.version={{ otel_service_version }}"
+        OTEL_TRACES_EXPORTER: "{{ 'otlp' if otel_traces_enabled else 'none' }}"
+    state: present

@@ -1,0 +1,12 @@
+---
+- name: Deploy cAdvisor via DaemonSet manifest (fallback)
+  community.kubernetes.k8s:
+    state: present
+    namespace: "{{ namespace }}"
+    definition: "{{ lookup('file', 'files/cadvisor-daemonset.yaml') }}"
+
+- name: Create Service for cAdvisor
+  community.kubernetes.k8s:
+    state: present
+    namespace: "{{ namespace }}"
+    definition: "{{ lookup('file', 'files/cadvisor-service.yaml') }}"

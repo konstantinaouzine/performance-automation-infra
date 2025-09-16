@@ -1,0 +1,14 @@
+helm_chart_path: /home/kostaharman/helm-charts/springboot-app
+helm_release_name: springboot-app
+helm_namespace: app
+springboot_image_name: springboot-postgres
+springboot_build_path: /home/kostaharman/springboot-postgres
+# image tag генерируется динамически в playbook (pre_tasks set_fact springboot_image_tag)
+# оставлено пустым намеренно, чтобы не вводить в заблуждение.
+
+# OTEL / observability параметры (переопределяют значения в chart values.yaml при деплое)
+otel_agent_host: otel-agent.monitoring.svc.cluster.local
+otel_service_name: springboot-app
+otel_namespace: app
+otel_service_version: "0.0.1"
+otel_traces_enabled: false   # true позже когда подключите Tempo

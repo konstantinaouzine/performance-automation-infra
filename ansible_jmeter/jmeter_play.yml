@@ -1,0 +1,181 @@
+---
+- name: Build & Deploy JMeter load generator
+  hosts: localhost
+  gather_facts: false
+  vars:
+    jmeter_namespace: load
+    jmeter_image_name: jmeter-loadgen
+    jmeter_build_path: /home/kostaharman/ansible_jmeter
+    # Имя JMeter тестового файла (можно переопределить: -e jmeter_test_file=read_vs_write.jmx)
+    jmeter_test_file: test.jmx
+    # Полный путь к тестовому файлу (можно переопределить напрямую или оставить формирование из имени)
+    jmeter_testplan_path: "/home/kostaharman/ansible_jmeter/tests/{{ jmeter_test_file }}"
+    jmeter_local_logs_dir: "{{ lookup('env','HOME') }}/jmeter_logs"
+    # jmeter_image_tag intentionally not preset to force timestamp unless user overrides with -e jmeter_image_tag=...
+    jmeter_job_manifest_template: jmeter_job.yaml.j2
+    jmeter_metrics_port: 9270
+    jmeter_prom_delay_seconds: 15
+    # Correct in-cluster DNS of Spring Boot service (Helm named it <release>-<chart>)
+    # Previously was springboot-app.app.svc.cluster.local causing UnknownHost
+    jmeter_app_host: springboot-app-springboot-app.app.svc.cluster.local
+    # How long to keep pod alive after test so Prometheus (30s scrape) can collect metrics at least twice
+    jmeter_linger_seconds: 90
+    jmeter_threads: 10
+    jmeter_ramp: 5
+    jmeter_cpu_request: 100m
+    jmeter_mem_request: 256Mi
+    jmeter_cpu_limit: 500m
+    jmeter_mem_limit: 512Mi
+    jmeter_pvc_name: jmeter-artifacts
+    jmeter_pvc_storage: 1Gi
+  pre_tasks:
+    - name: Derive effective JMeter test file name (do not override extra var)
+      set_fact:
+        jmeter_test_file_effective: >-
+          {{ (jmeter_test_file | default('test.jmx')) if (jmeter_test_file | default('test.jmx')) | regex_search('\\.jmx$') else ( (jmeter_test_file | default('test.jmx')) + '.jmx') }}
+
+    - name: Recompute test plan path using effective filename
+      set_fact:
+        jmeter_testplan_path: "/home/kostaharman/ansible_jmeter/tests/{{ jmeter_test_file_effective }}"
+
+    - name: Collect available JMX files
+      set_fact:
+        jmeter_available_jmx: "{{ lookup('fileglob','/home/kostaharman/ansible_jmeter/tests/*.jmx', wantlist=True) | map('basename') | list }}"
+
+    - name: Validate JMeter test file exists (effective)
+      stat:
+        path: "{{ jmeter_testplan_path }}"
+      register: jmeter_test_file_stat
+
+    - name: Fail if JMeter test file missing
+      fail:
+        msg: >-
+          JMeter test file '{{ jmeter_test_file_effective }}' not found at {{ jmeter_testplan_path }}.
+          Available (*.jmx): {{ (jmeter_available_jmx | default([])) | join(', ') | default('none') }}
+      when: not jmeter_test_file_stat.stat.exists
+
+    - name: Show chosen JMeter test file
+      debug:
+        msg: "Using JMeter test file: {{ jmeter_test_file_effective }} (path: {{ jmeter_testplan_path }}) (original extra var: {{ jmeter_test_file | default('n/a') }})"
+
+    - name: Generate timestamp tag (only if not provided)
+      set_fact:
+        jmeter_image_tag: "{{ lookup('pipe','date +%Y%m%d%H%M%S') }}"
+      when: jmeter_image_tag is not defined or jmeter_image_tag|length == 0 or jmeter_image_tag == 'latest'
+    - name: Set run id (reuse image tag)
+      set_fact:
+        jmeter_run_id: "{{ jmeter_image_tag }}"
+    - name: Show tag
+      debug:
+        msg: "Building JMeter image tag {{ jmeter_image_tag }}"
+    - name: Derive human readable run directory name
+      set_fact:
+        jmeter_local_run_dir: "{{ (jmeter_run_id | regex_replace('^(\\d{4})(\\d{2})(\\d{2})(\\d{2})(\\d{2})(\\d{2})$', '\\1-\\2-\\3_\\4-\\5-\\6')) }}"
+    - name: Write PVC manifest (idempotent)
+      copy:
+        dest: "/tmp/{{ jmeter_pvc_name }}.yaml"
+        content: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: {{ jmeter_pvc_name }}
+            namespace: {{ jmeter_namespace }}
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: {{ jmeter_pvc_storage }}
+    - name: Apply PVC
+      shell: kubectl apply -f /tmp/{{ jmeter_pvc_name }}.yaml
+      register: pvc_apply
+      changed_when: "'created' in pvc_apply.stdout or 'configured' in pvc_apply.stdout"
+  roles:
+    - jmeter_build
+    - jmeter_deploy
+  post_tasks:
+    - name: Hint
+      debug:
+        msg: >-
+          Run created as Job jmeter-loadgen-{{ jmeter_run_id }} (Succeeded once done). Rerun by re-invoking playbook.
+    - name: Ensure local logs directory exists
+      file:
+        path: "{{ jmeter_local_logs_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Wait for job to finish (complete or timeout)
+      shell: kubectl wait --for=condition=complete job/jmeter-loadgen-{{ jmeter_run_id }} -n {{ jmeter_namespace }} --timeout=600s
+      register: wait_result
+      failed_when: false
+
+    - name: Get JMeter pod name
+      shell: kubectl get pods -n {{ jmeter_namespace }} -l job-name=jmeter-loadgen-{{ jmeter_run_id }} -o jsonpath='{.items[0].metadata.name}'
+      register: jmeter_pod
+      changed_when: false
+
+    - name: Show collector copy plan
+      debug:
+        msg: "Artifacts will be copied from PVC via collector pod into {{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }} (run_id={{ jmeter_run_id }})"
+
+    - name: Create collector pod manifest (local temp file)
+      copy:
+        dest: "/tmp/jmeter-collector-{{ jmeter_run_id }}.yaml"
+        content: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: jmeter-collector-{{ jmeter_run_id }}
+            namespace: {{ jmeter_namespace }}
+            labels:
+              app: jmeter-collector
+              run_id: "{{ jmeter_run_id }}"
+          spec:
+            restartPolicy: Never
+            volumes:
+              - name: artifacts
+                persistentVolumeClaim:
+                  claimName: {{ jmeter_pvc_name }}
+            containers:
+              - name: collector
+                image: busybox:1.36
+                command: ["sh","-c","sleep 3600"]
+                volumeMounts:
+                  - name: artifacts
+                    mountPath: /artifacts
+      when: wait_result.rc == 0
+
+    - name: Apply collector pod
+      shell: kubectl apply -f /tmp/jmeter-collector-{{ jmeter_run_id }}.yaml
+      when: wait_result.rc == 0
+      register: collector_apply
+      changed_when: "collector_apply.rc == 0"
+
+    - name: Wait for collector pod Ready
+      shell: kubectl wait --for=condition=Ready pod/jmeter-collector-{{ jmeter_run_id }} -n {{ jmeter_namespace }} --timeout=60s
+      register: collector_ready
+      failed_when: false
+      when: wait_result.rc == 0
+
+    - name: Copy artifacts directory via collector pod (log & JTL)
+      shell: |
+        set -e
+        mkdir -p {{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}
+        # Copy both log and jtl if they exist
+        kubectl cp {{ jmeter_namespace }}/jmeter-collector-{{ jmeter_run_id }}:/artifacts/{{ jmeter_run_id }}/jmeter.log {{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}/jmeter.log 2>/dev/null || true
+        kubectl cp {{ jmeter_namespace }}/jmeter-collector-{{ jmeter_run_id }}:/artifacts/{{ jmeter_run_id }}/results.jtl {{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}/results.jtl 2>/dev/null || true
+      when: collector_ready.rc == 0
+      register: collector_copy
+      changed_when: false
+
+    - name: Symlink latest run (optional convenience)
+      file:
+        src: "{{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}"
+        dest: "{{ jmeter_local_logs_dir }}/latest"
+        state: link
+      when: collector_ready.rc == 0
+
+    - name: Cleanup collector pod (leave PVC)
+      shell: kubectl delete pod/jmeter-collector-{{ jmeter_run_id }} -n {{ jmeter_namespace }} --ignore-not-found
+      when: collector_ready.rc == 0
+      changed_when: false

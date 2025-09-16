@@ -1,0 +1,14 @@
+---
+- name: Deploy Spring Boot app to Kubernetes via Helm
+  hosts: app
+  gather_facts: false
+  pre_tasks:
+    - name: Generate timestamp-based image tag (YYYYMMDDHHMMSS)
+      set_fact:
+        springboot_image_tag: "{{ lookup('pipe','date +%Y%m%d%H%M%S') }}"
+    - name: Show image tag
+      debug:
+        msg: "Using image tag: {{ springboot_image_tag }}"
+  roles:
+    - build_image
+    - deploy_springboot

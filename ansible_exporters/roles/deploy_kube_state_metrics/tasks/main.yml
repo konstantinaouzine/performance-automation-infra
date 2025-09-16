@@ -1,0 +1,14 @@
+---
+- name: Deploy kube-state-metrics via Helm
+  community.kubernetes.helm:
+    name: kube-state-metrics
+    chart_ref: prometheus-community/kube-state-metrics
+    namespace: "{{ namespace }}"
+    create_namespace: true
+    state: present
+
+- name: Create Service for kube-state-metrics
+  community.kubernetes.k8s:
+    state: present
+    namespace: "{{ namespace }}"
+    definition: "{{ lookup('file', 'files/kube-state-metrics-service.yaml') }}"

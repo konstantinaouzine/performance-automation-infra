@@ -1,0 +1,4 @@
+otel_namespace: monitoring
+otel_chart: open-telemetry/opentelemetry-collector
+otel_config_file: otel-collector-config.yaml
+otel_gateway_config_file: otel-gateway-config.yaml

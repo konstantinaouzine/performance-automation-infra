@@ -1,0 +1,10 @@
+---
+- name: Build JMeter load generator image
+  community.docker.docker_image:
+    name: "{{ jmeter_image_name }}"
+    tag: "{{ jmeter_image_tag }}"
+    build:
+      path: "{{ jmeter_build_path }}"
+    source: build
+    state: present
+    force_source: true

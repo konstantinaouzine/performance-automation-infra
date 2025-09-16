@@ -1,0 +1,14 @@
+---
+- name: Deploy node-exporter via Helm
+  community.kubernetes.helm:
+    name: node-exporter
+    chart_ref: prometheus-community/prometheus-node-exporter
+    namespace: "{{ namespace }}"
+    create_namespace: true
+    state: present
+
+- name: Create Service for node-exporter
+  community.kubernetes.k8s:
+    state: present
+    namespace: "{{ namespace }}"
+    definition: "{{ lookup('file', 'files/node-exporter-service.yaml') }}"

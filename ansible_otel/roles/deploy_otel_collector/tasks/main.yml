@@ -1,0 +1,17 @@
+---
+- name: Deploy Otel Collector DaemonSet
+  community.kubernetes.helm:
+    name: otel-collector-ds
+    chart_ref: open-telemetry/opentelemetry-collector
+    namespace: monitoring
+    create_namespace: true
+    values:
+      mode: daemonset
+      image:
+        repository: otel/opentelemetry-collector
+        tag: latest
+      config: "{{ lookup('file', 'otel-collector-config.yaml') | from_yaml }}"
+    state: present
+
+- name: Create/Update otel-agent Service
+  import_tasks: service.yml

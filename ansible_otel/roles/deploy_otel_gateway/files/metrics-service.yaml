@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector-gateway-metrics
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/instance: otel-collector-gateway
+    app.kubernetes.io/name: opentelemetry-collector
+    component: standalone-collector
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "8889"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/instance: otel-collector-gateway
+    app.kubernetes.io/name: opentelemetry-collector
+    component: standalone-collector
+  ports:
+    - name: metrics
+      port: 8889
+      targetPort: 8889

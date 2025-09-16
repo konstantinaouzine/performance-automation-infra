@@ -1,0 +1,61 @@
+name: JMeter Only Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'ansible_jmeter/**'
+      - '.github/workflows/jmeter_only.yml'
+
+jobs:
+  jmeter:
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash
+    env:
+      JMETER_VERSION: 5.6.3
+      TEST_PLAN: ansible_jmeter/tests/test_app_load_only.jmx
+      REPORT_DIR: jmeter-report
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure Java
+        run: |
+          if ! command -v java >/dev/null; then
+            sudo apt-get update -y
+            sudo apt-get install -y openjdk-17-jre-headless
+          fi
+          java -version
+
+      - name: Download Apache JMeter
+        run: |
+          if [ ! -d apache-jmeter-$JMETER_VERSION ]; then
+            curl -sL https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-$JMETER_VERSION.tgz -o jmeter.tgz
+            tar -xzf jmeter.tgz
+          fi
+          ls -1 apache-jmeter-$JMETER_VERSION/bin/jmeter || true
+
+      - name: Run JMeter Non-GUI
+        run: |
+          set -e
+          rm -rf "$REPORT_DIR" || true
+          mkdir -p "$REPORT_DIR"
+          apache-jmeter-$JMETER_VERSION/bin/jmeter -n -t "$TEST_PLAN" -l $REPORT_DIR/results.jtl -e -o $REPORT_DIR/site
+
+      - name: Summarize Results
+        run: |
+          echo '--- SUMMARY ---'
+          grep -E 'summary =' $REPORT_DIR/results.jtl || true
+          # If dashboard generated, note it
+          test -f $REPORT_DIR/site/index.html && echo "HTML report generated" || echo "No HTML report"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jmeter-report
+          path: |
+            ${{ env.REPORT_DIR }}/results.jtl
+            ${{ env.REPORT_DIR }}/site

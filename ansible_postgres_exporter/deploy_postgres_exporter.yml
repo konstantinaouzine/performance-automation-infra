@@ -1,0 +1,18 @@
+---
+- name: Deploy PostgreSQL Exporter
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    exporter_namespace: "{{ exporter_namespace | default('monitoring') }}"
+    helm_release: "{{ helm_release | default('postgres-exporter') }}"
+    helm_chart: "{{ helm_chart | default('prometheus-community/prometheus-postgres-exporter') }}"
+    prometheus_release_label: "{{ prometheus_release_label | default('prometheus') }}"
+    service_port: "{{ service_port | default('9187') }}"
+    service_path: "{{ service_path | default('/metrics') }}"
+    create_namespace: "{{ create_namespace | default(true) }}"
+    add_scrape_annotations: "{{ add_scrape_annotations | default(true) }}"
+    servicemonitor_interval: "{{ servicemonitor_interval | default('10s') }}"
+    servicemonitor_timeout: "{{ servicemonitor_timeout | default('9s') }}"
+  roles:
+    - role: deploy_postgres_exporter

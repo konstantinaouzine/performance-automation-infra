@@ -1,0 +1,4 @@
+apiVersion: v2
+name: springboot-app
+version: 0.1.0
+description: Helm chart for Spring Boot application

@@ -1,0 +1,25 @@
+# Spring Boot module local ignore
+# Build output
+/target/
+
+# IDE
+*.iml
+.idea/
+.classpath
+.project
+.settings/
+
+# Logs & temp
+*.log
+hs_err_pid*
+replay_pid*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Maven wrapper cache (optional)
+.mvn/wrapper/maven-wrapper.jar
+
+# Misc
+*.swp

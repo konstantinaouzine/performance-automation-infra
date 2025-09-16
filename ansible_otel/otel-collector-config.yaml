@@ -1,0 +1,62 @@
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'node-exporter'
+          scrape_interval: 30s
+          static_configs:
+            - targets: ['node-exporter.monitoring.svc.cluster.local:9100']
+        - job_name: 'kube-state-metrics'
+          scrape_interval: 30s
+          static_configs:
+            - targets: ['kube-state-metrics-custom.monitoring.svc.cluster.local:8082']
+        - job_name: 'cadvisor'
+          scrape_interval: 30s
+          static_configs:
+            - targets: ['cadvisor.monitoring.svc.cluster.local:8081']
+        - job_name: 'postgres-exporter'
+          scrape_interval: 30s
+          static_configs:
+            - targets: ['postgres-exporter-prometheus-postgres-exporter.monitoring.svc.cluster.local:9187']
+        - job_name: 'jmeter'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['jmeter-loadgen.load.svc.cluster.local:9270']
+  hostmetrics:
+    collection_interval: 60s
+    scrapers:
+      cpu: {}
+      memory: {}
+      disk: {}
+      filesystem: {}
+      load: {}
+      network: {}
+      paging: {}
+      processes: {}
+  otlp:
+    protocols:
+      grpc: {}
+      http: {}
+processors:
+  batch: {}
+  resource:
+    attributes:
+      - key: service.name
+        action: upsert
+        value: springboot-app
+exporters:
+  otlp:
+    # Fixed: previous DNS name did not exist (NXDOMAIN). Use actual Service name shown by kubectl get svc.
+    endpoint: "otel-collector-gateway-opentelemetry-collector.monitoring.svc.cluster.local:4317"
+    tls:
+      insecure: true
+  debug: {}
+service:
+  telemetry:
+    logs:
+      level: "debug"
+  pipelines:
+    metrics:
+      receivers: [prometheus, hostmetrics, otlp]
+      processors: [resource, batch]
+      exporters: [otlp, debug]

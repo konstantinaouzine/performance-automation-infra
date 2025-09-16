@@ -1,0 +1,5 @@
+---
+- name: Install Prometheus via Helm
+  hosts: localhost
+  roles:
+    - deploy_prometheus

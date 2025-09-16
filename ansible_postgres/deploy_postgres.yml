@@ -1,0 +1,7 @@
+---
+- name: Deploy PostgreSQL to Kubernetes via Bitnami Helm chart
+  hosts: db
+  gather_facts: false
+  roles:
+    - deploy_postgres
+    - init_postgres

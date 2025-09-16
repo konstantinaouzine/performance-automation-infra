@@ -1,0 +1,72 @@
+---
+- name: Wait for PostgreSQL service in k8s to be ready
+  ansible.builtin.wait_for:
+    host: localhost
+    port: 5432
+    delay: 5
+    timeout: 60
+
+- name: Create application user with privileges
+  community.postgresql.postgresql_user:
+    name: myuser
+    password: mypass
+    db: mydb
+    priv: "ALL"
+    login_host: localhost
+    port: 5432
+    login_user: postgres
+    login_password: "{{ postgres_admin_password }}"
+    state: present
+
+- name: Grant privileges on schema public
+  community.postgresql.postgresql_privs:
+    database: mydb
+    roles: myuser
+    type: schema
+    objs: public
+    privs: USAGE,CREATE
+    login_host: localhost
+    port: 5432
+    login_user: postgres
+    login_password: "{{ postgres_admin_password }}"
+
+- name: Grant privileges on all tables in schema public
+  community.postgresql.postgresql_privs:
+    database: mydb
+    roles: myuser
+    type: table
+    objs: ALL_IN_SCHEMA
+    schema: public
+    privs: ALL
+    login_host: localhost
+    port: 5432
+    login_user: postgres
+    login_password: "{{ postgres_admin_password }}"
+
+- name: Grant privileges on all sequences in schema public
+  community.postgresql.postgresql_privs:
+    database: mydb
+    roles: myuser
+    type: sequence
+    objs: ALL_IN_SCHEMA
+    schema: public
+    privs: ALL
+    login_host: localhost
+    port: 5432
+    login_user: postgres
+    login_password: "{{ postgres_admin_password }}"
+
+- name: Create table test_table and insert data
+  community.postgresql.postgresql_query:
+    db: mydb
+    login_host: localhost
+    port: 5432
+    login_user: myuser
+    login_password: mypass
+    query: |
+      CREATE TABLE IF NOT EXISTS test_table (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255)
+      );
+      INSERT INTO test_table (name) VALUES ('Test1');
+      INSERT INTO test_table (name) VALUES ('Test2');

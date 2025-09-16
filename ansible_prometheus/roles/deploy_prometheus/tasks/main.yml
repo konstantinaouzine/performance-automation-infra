@@ -1,0 +1,15 @@
+---
+- name: Add Prometheus Helm repo
+  kubernetes.core.helm_repository:
+    name: prometheus-community
+    repo_url: https://prometheus-community.github.io/helm-charts
+
+- name: Install Prometheus via Helm (with custom values file)
+  kubernetes.core.helm:
+    name: prometheus
+    chart_ref: prometheus-community/prometheus
+    namespace: monitoring
+    create_namespace: true
+    values_files:
+      - "{{ role_path }}/files/prometheus-values.yaml"
+    state: present

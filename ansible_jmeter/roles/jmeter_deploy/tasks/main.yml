@@ -1,0 +1,153 @@
+---
+- name: Ensure load namespace exists
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ jmeter_namespace }}"
+
+- name: Read original JMX test plan
+  ansible.builtin.slurp:
+    src: "{{ jmeter_testplan_path }}"
+  register: _orig_jmx
+
+- name: Decode JMX content
+  ansible.builtin.set_fact:
+    _jmx_content: "{{ _orig_jmx['content'] | b64decode }}"
+
+- name: Collect Prometheus listener counts
+  ansible.builtin.set_fact:
+    _prom_listener_count: "{{ (_jmx_content | regex_findall('<com\\.github\\.johrstrom\\.listener\\.PrometheusListener')) | length }}"
+    _prom_listener_enabled_count: "{{ (_jmx_content | regex_findall('<com\\.github\\.johrstrom\\.listener\\.PrometheusListener[^>]*enabled=\"true\"')) | length }}"
+    _prom_listener_disabled_count: "{{ (_jmx_content | regex_findall('<com\\.github\\.johrstrom\\.listener\\.PrometheusListener[^>]*enabled=\"false\"')) | length }}"
+
+- name: Derive Prometheus listener flags
+  ansible.builtin.set_fact:
+    _prom_listener_present: "{{ _prom_listener_count | int > 0 }}"
+    _prom_listener_enabled: "{{ _prom_listener_enabled_count | int > 0 }}"
+    _prom_listener_disabled: "{{ _prom_listener_disabled_count | int > 0 and _prom_listener_enabled_count | int == 0 }}"
+
+- name: Debug listener detection
+  ansible.builtin.debug:
+    msg: "prom_listener_present={{ _prom_listener_present }} enabled={{ _prom_listener_enabled }} disabled={{ _prom_listener_disabled }} count={{ _prom_listener_count }}"
+
+- name: Enable existing disabled Prometheus listener (no reinjection)
+  ansible.builtin.set_fact:
+    _patched_jmx: "{{ _jmx_content | regex_replace('(<com\\.github\\.johrstrom\\.listener\\.PrometheusListener[^>]*?)enabled=\"false\"', '\\1enabled=\"true\"') }}"
+  when: _prom_listener_disabled
+
+- name: Sanitize patched JMX (remove control chars)
+  ansible.builtin.set_fact:
+    _patched_jmx: "{{ _patched_jmx | regex_replace('[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]', '') }}"
+  when: _prom_listener_disabled
+
+- name: Write patched JMX (listener enabled)
+  ansible.builtin.copy:
+    dest: "{{ jmeter_testplan_path | regex_replace('\\.jmx$', '') }}_with_prom.jmx"
+    content: "{{ _patched_jmx }}"
+    mode: '0644'
+  when: _prom_listener_disabled
+
+- name: Use patched JMX going forward
+  ansible.builtin.set_fact:
+    jmeter_testplan_path: "{{ jmeter_testplan_path | regex_replace('\\.jmx$', '') }}_with_prom.jmx"
+  when: _prom_listener_disabled
+
+- name: Define Prometheus listener XML block (when missing)
+  ansible.builtin.set_fact:
+    _prom_listener_block: |
+      <com.github.johrstrom.listener.PrometheusListener guiclass="com.github.johrstrom.listener.gui.PrometheusListenerGui" testclass="com.github.johrstrom.listener.PrometheusListener" testname="Prometheus Listener" enabled="true">
+        <collectionProp name="prometheus.collector_definitions">
+          <elementProp name="" elementType="com.github.johrstrom.listener.ListenerCollectorConfig">
+            <stringProp name="collector.help">HTTP request total</stringProp>
+            <stringProp name="collector.metric_name">http_requests</stringProp>
+            <stringProp name="collector.type">COUNTER</stringProp>
+            <collectionProp name="collector.labels">
+              <stringProp name="label">label</stringProp>
+              <stringProp name="code">code</stringProp>
+              <stringProp name="run_id">run_id</stringProp>
+            </collectionProp>
+            <stringProp name="collector.quantiles_or_buckets"></stringProp>
+            <stringProp name="listener.collector.measuring">CountTotal</stringProp>
+          </elementProp>
+          <elementProp name="" elementType="com.github.johrstrom.listener.ListenerCollectorConfig">
+            <stringProp name="collector.help">HTTP success total</stringProp>
+            <stringProp name="collector.metric_name">http_success</stringProp>
+            <stringProp name="collector.type">COUNTER</stringProp>
+            <collectionProp name="collector.labels">
+              <stringProp name="label">label</stringProp>
+              <stringProp name="run_id">run_id</stringProp>
+            </collectionProp>
+            <stringProp name="collector.quantiles_or_buckets"></stringProp>
+            <stringProp name="listener.collector.measuring">SuccessTotal</stringProp>
+          </elementProp>
+          <elementProp name="" elementType="com.github.johrstrom.listener.ListenerCollectorConfig">
+            <stringProp name="collector.help">HTTP failure total</stringProp>
+            <stringProp name="collector.metric_name">http_failure</stringProp>
+            <stringProp name="collector.type">COUNTER</stringProp>
+            <collectionProp name="collector.labels">
+              <stringProp name="label">label</stringProp>
+              <stringProp name="run_id">run_id</stringProp>
+            </collectionProp>
+            <stringProp name="collector.quantiles_or_buckets"></stringProp>
+            <stringProp name="listener.collector.measuring">FailureTotal</stringProp>
+          </elementProp>
+          <elementProp name="" elementType="com.github.johrstrom.listener.ListenerCollectorConfig">
+            <stringProp name="collector.help">Latency histogram</stringProp>
+            <stringProp name="collector.metric_name">http_latency_hist</stringProp>
+            <stringProp name="collector.type">HISTOGRAM</stringProp>
+            <collectionProp name="collector.labels">
+              <stringProp name="label">label</stringProp>
+              <stringProp name="run_id">run_id</stringProp>
+            </collectionProp>
+            <stringProp name="collector.quantiles_or_buckets">50,100,200,400,800,1600</stringProp>
+            <stringProp name="listener.collector.measuring">Latency</stringProp>
+          </elementProp>
+        </collectionProp>
+        <stringProp name="TestPlan.comments">auto-injected prometheus listener</stringProp>
+      </com.github.johrstrom.listener.PrometheusListener>
+      <hashTree/>
+  when: not _prom_listener_present and (_prom_listener_count | int) == 0
+
+- name: Prepare tail & body for injection
+  ansible.builtin.set_fact:
+    _tail: "{{ (_jmx_content | regex_search('(\\n\\s*</hashTree>\\s*\\n\\s*</hashTree>\\s*\\n\\s*</jmeterTestPlan>\\s*)$')) | default((_jmx_content | regex_search('(\\n\\s*</hashTree>\\s*\\n\\s*</jmeterTestPlan>\\s*)$'))) }}"
+    _body: "{{ _jmx_content | regex_replace('(\\n\\s*</hashTree>\\s*\\n\\s*</hashTree>\\s*\\n\\s*</jmeterTestPlan>\\s*)$','') | regex_replace('(\\n\\s*</hashTree>\\s*\\n\\s*</jmeterTestPlan>\\s*)$','') }}"
+  when: not _prom_listener_present and (_prom_listener_count | int) == 0
+
+- name: Build augmented JMX (reassemble with listener + original tail)
+  ansible.builtin.set_fact:
+    _augmented_jmx: "{{ _body }}\n{{ _prom_listener_block }}\n{{ _tail }}"
+  when: not _prom_listener_present and (_prom_listener_count | int) == 0
+
+- name: Sanitize augmented JMX (remove control chars)
+  ansible.builtin.set_fact:
+    _augmented_jmx: "{{ _augmented_jmx | regex_replace('[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]', '') }}"
+  when: not _prom_listener_present and (_prom_listener_count | int) == 0
+
+- name: Write augmented JMX file (side-by-side)
+  ansible.builtin.copy:
+    dest: "{{ jmeter_testplan_path | regex_replace('\\.jmx$', '') }}_with_prom.jmx"
+    content: "{{ _augmented_jmx }}"
+    mode: '0644'
+  when: not _prom_listener_present and (_prom_listener_count | int) == 0
+
+- name: Use augmented JMX going forward
+  ansible.builtin.set_fact:
+    jmeter_testplan_path: "{{ jmeter_testplan_path | regex_replace('\\.jmx$', '') }}_with_prom.jmx"
+  when: not _prom_listener_present and (_prom_listener_count | int) == 0
+
+- name: Verify Prometheus listener now present (augmented or patched)
+  ansible.builtin.assert:
+    that:
+      - (_prom_listener_present) or (_prom_listener_disabled) or ( (_augmented_jmx is defined) and ('PrometheusListener' in _augmented_jmx) ) or ( (_patched_jmx is defined) and ('PrometheusListener' in _patched_jmx) )
+    fail_msg: "Prometheus listener injection/enable failed: listener still not found in resulting JMX content."
+    success_msg: "Prometheus listener ensured (present/enabled or injected)."
+
+- name: Apply JMeter Job (ConfigMap + Job + Service)
+  kubernetes.core.k8s:
+    state: present
+    namespace: "{{ jmeter_namespace }}"
+    definition: "{{ lookup('template', jmeter_job_manifest_template) }}"

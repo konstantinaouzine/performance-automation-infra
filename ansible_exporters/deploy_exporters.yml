@@ -1,0 +1,7 @@
+---
+- hosts: localhost
+  gather_facts: false
+  roles:
+    - role: deploy_node_exporter
+    - role: deploy_kube_state_metrics
+    - role: deploy_cadvisor

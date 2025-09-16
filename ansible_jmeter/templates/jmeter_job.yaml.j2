@@ -1,0 +1,113 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jmeter-testplan
+  namespace: {{ jmeter_namespace }}
+data:
+  {{ jmeter_test_file_effective }}: |-
+    {{ lookup('file', jmeter_testplan_path) | indent(4) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jmeter-loadgen-{{ jmeter_run_id }}
+  namespace: {{ jmeter_namespace }}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: jmeter-loadgen
+        run_id: "{{ jmeter_run_id }}"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ jmeter_metrics_port }}"
+        prometheus.io/path: "/metrics"
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: jmeter
+          image: {{ jmeter_image_name }}:{{ jmeter_image_tag }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ jmeter_metrics_port }}
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: {{ jmeter_metrics_port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 1
+          env:
+            - name: THREADS
+              value: "{{ jmeter_threads }}"
+            - name: RAMP
+              value: "{{ jmeter_ramp }}"
+            - name: RUN_ID
+              value: "{{ jmeter_run_id }}"
+            - name: APP_HOST
+              value: "{{ jmeter_app_host }}"
+            - name: JMETER_LOG_TAIL
+              value: "{{ jmeter_log_tail | default('1000') }}"
+          command: ["/bin/sh","-c"]
+          args:
+            - |-
+              set -e
+              RUN_DIR="/artifacts/${RUN_ID}"
+              mkdir -p "$RUN_DIR"
+              echo "Starting JMeter run_id=${RUN_ID} target=${APP_HOST} (artifacts in $RUN_DIR)"
+              jmeter -n -t /tests/{{ jmeter_test_file_effective }} \
+                -Jprometheus.port={{ jmeter_metrics_port }} \
+                -Jprometheus.delay=5 \
+                -Jprometheus.ip=0.0.0.0 \
+                -Jthreads=${THREADS} \
+                -Jramp=${RAMP} \
+                -Jrun_id=${RUN_ID} \
+                -Japp_host=${APP_HOST} \
+                -l $RUN_DIR/results.jtl \
+                -j $RUN_DIR/jmeter.log || EXIT=$?
+              EXIT=${EXIT:-0}
+              echo "JMeter finished with exit code $EXIT"
+              if [ -f $RUN_DIR/jmeter.log ]; then echo '--- LAST LOG LINES ---'; tail -n ${JMETER_LOG_TAIL:-1000} $RUN_DIR/jmeter.log; fi
+              touch $RUN_DIR/DONE
+              echo "Sleeping {{ jmeter_linger_seconds }}s to allow Prometheus to scrape final metrics..."; sleep {{ jmeter_linger_seconds }}
+              exit $EXIT
+          volumeMounts:
+            - name: testplan
+              mountPath: /tests/{{ jmeter_test_file_effective }}
+              subPath: {{ jmeter_test_file_effective }}
+            - name: artifacts
+              mountPath: /artifacts
+          resources:
+            requests:
+              cpu: {{ jmeter_cpu_request }}
+              memory: {{ jmeter_mem_request }}
+            limits:
+              cpu: {{ jmeter_cpu_limit }}
+              memory: {{ jmeter_mem_limit }}
+      volumes:
+        - name: testplan
+          configMap:
+            name: jmeter-testplan
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: {{ jmeter_pvc_name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jmeter-loadgen
+  namespace: {{ jmeter_namespace }}
+  labels:
+    app: jmeter-loadgen
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "{{ jmeter_metrics_port }}"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: jmeter-loadgen
+  ports:
+    - name: metrics
+      port: {{ jmeter_metrics_port }}
+      targetPort: {{ jmeter_metrics_port }}

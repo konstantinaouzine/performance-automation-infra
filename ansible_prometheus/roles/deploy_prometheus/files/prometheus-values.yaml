@@ -1,0 +1,22 @@
+alertmanager:
+  enabled: true
+
+prometheus-node-exporter:
+  enabled: false
+
+kube-state-metrics:
+  enabled: false
+
+pushgateway:
+  enabled: false
+
+server:
+  global:
+  scrape_interval: 10s
+  scrape_timeout: 9s
+  retention: 15d
+
+extraScrapeConfigs: |
+  - job_name: 'otel-gateway'
+    static_configs:
+      - targets: ['otel-collector-gateway-metrics.monitoring.svc.cluster.local:8889']

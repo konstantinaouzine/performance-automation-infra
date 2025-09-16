@@ -1,0 +1,9 @@
+postgres_chart_name: bitnami/postgresql
+postgres_release_name: postgres-db
+postgres_namespace: db
+postgres_values:
+  auth:
+    username: myuser
+    password: mypass
+    database: mydb
+postgres_admin_password: "{{ lookup('pipe', 'kubectl get secret postgres-db-postgresql -n db -o jsonpath=\"{.data.postgres-password}\" | base64 --decode') }}"

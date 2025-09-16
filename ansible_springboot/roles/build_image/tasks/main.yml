@@ -1,0 +1,10 @@
+---
+- name: Build Docker image for Spring Boot app
+  community.docker.docker_image:
+    name: "{{ springboot_image_name }}"
+    tag: "{{ springboot_image_tag | default('dev') }}"
+    build:
+      path: "{{ springboot_build_path }}"
+    source: build
+    state: present
+    force_source: true

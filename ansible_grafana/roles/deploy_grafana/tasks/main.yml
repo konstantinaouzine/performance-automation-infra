@@ -1,0 +1,14 @@
+---
+- name: Add Grafana Helm repo
+  community.kubernetes.helm_repository:
+    name: grafana
+    repo_url: https://grafana.github.io/helm-charts
+
+- name: Install Grafana via Helm
+  community.kubernetes.helm:
+    name: grafana
+    chart_ref: grafana/grafana
+    release_namespace: monitoring
+    create_namespace: true
+    values_files:
+      - '{{ role_path }}/files/grafana-values.yaml'
