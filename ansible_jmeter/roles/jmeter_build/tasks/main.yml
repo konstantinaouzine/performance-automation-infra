@@ -1,4 +1,19 @@
 ---
+# Если доступен minikube – просто экспортируем его docker-env в текущий процесс.
+- name: Activate minikube docker-env if available
+  shell: |
+    if command -v minikube >/dev/null 2>&1; then
+      echo "[INFO] Using minikube docker-env"
+      eval $(minikube docker-env)
+      # Показать какой daemon теперь активен (экранируем фигурные скобки для Ansible Jinja)
+      docker info --format 'Server: {{'{{'}}.ServerVersion{{'}}'}} {{'{{'}}.OperatingSystem{{'}}'}}' || true
+    else
+      echo "[INFO] minikube not installed; using default docker context"
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+
 - name: Build JMeter load generator image
   community.docker.docker_image:
     name: "{{ jmeter_image_name }}"

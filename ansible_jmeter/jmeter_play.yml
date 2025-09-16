@@ -3,13 +3,15 @@
   hosts: localhost
   gather_facts: false
   vars:
+    # Корневая директория репо: в GitHub Actions = GITHUB_WORKSPACE, локально = родитель каталога playbook.
+    jmeter_repo_root: "{{ (lookup('env','GITHUB_WORKSPACE') | default(playbook_dir, true)) | regex_replace('/ansible_jmeter$','') }}"
     jmeter_namespace: load
     jmeter_image_name: jmeter-loadgen
-    jmeter_build_path: /home/kostaharman/ansible_jmeter
+    jmeter_build_path: "{{ jmeter_repo_root }}/ansible_jmeter"
     # Имя JMeter тестового файла (можно переопределить: -e jmeter_test_file=read_vs_write.jmx)
     jmeter_test_file: test.jmx
     # Полный путь к тестовому файлу (можно переопределить напрямую или оставить формирование из имени)
-    jmeter_testplan_path: "/home/kostaharman/ansible_jmeter/tests/{{ jmeter_test_file }}"
+    jmeter_testplan_path: "{{ jmeter_repo_root }}/ansible_jmeter/tests/{{ jmeter_test_file }}"
     jmeter_local_logs_dir: "{{ lookup('env','HOME') }}/jmeter_logs"
     # jmeter_image_tag intentionally not preset to force timestamp unless user overrides with -e jmeter_image_tag=...
     jmeter_job_manifest_template: jmeter_job.yaml.j2
@@ -29,14 +31,21 @@
     jmeter_pvc_name: jmeter-artifacts
     jmeter_pvc_storage: 1Gi
   pre_tasks:
+    - name: Debug repo root resolution
+      debug:
+        msg: "jmeter_repo_root={{ jmeter_repo_root }} playbook_dir={{ playbook_dir }}"
+
+    - name: Abort (unsupported) when running in check mode
+      meta: end_play
+      when: ansible_check_mode
     - name: Normalize JMeter test file (ensure single .jmx) and path
       set_fact:
         jmeter_test_file_effective: "{{ (jmeter_test_file | default('test')) | regex_replace('\\.jmx$','') }}.jmx"
-        jmeter_testplan_path: "/home/kostaharman/ansible_jmeter/tests/{{ (jmeter_test_file | default('test')) | regex_replace('\\.jmx$','') }}.jmx"
+        jmeter_testplan_path: "{{ jmeter_repo_root }}/ansible_jmeter/tests/{{ (jmeter_test_file | default('test')) | regex_replace('\\.jmx$','') }}.jmx"
 
     - name: Collect available JMX files
       set_fact:
-        jmeter_available_jmx: "{{ lookup('fileglob','/home/kostaharman/ansible_jmeter/tests/*.jmx', wantlist=True) | map('basename') | list }}"
+        jmeter_available_jmx: "{{ lookup('fileglob', jmeter_repo_root + '/ansible_jmeter/tests/*.jmx', wantlist=True) | map('basename') | list }}"
 
     - name: Validate JMeter test file exists (effective)
       stat:
@@ -158,8 +167,10 @@
         set -e
         mkdir -p {{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}
         # Copy both log and jtl if they exist
-        kubectl cp {{ jmeter_namespace }}/jmeter-collector-{{ jmeter_run_id }}:/artifacts/{{ jmeter_run_id }}/jmeter.log {{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}/jmeter.log 2>/dev/null || true
-        kubectl cp {{ jmeter_namespace }}/jmeter-collector-{{ jmeter_run_id }}:/artifacts/{{ jmeter_run_id }}/results.jtl {{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}/results.jtl 2>/dev/null || true
+        kubectl cp {{ jmeter_namespace }}/jmeter-collector-{{ jmeter_run_id }}:/artifacts/{{ jmeter_run_id }}/jmeter.log \
+          {{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}/jmeter.log 2>/dev/null || true
+        kubectl cp {{ jmeter_namespace }}/jmeter-collector-{{ jmeter_run_id }}:/artifacts/{{ jmeter_run_id }}/results.jtl \
+          {{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}/results.jtl 2>/dev/null || true
       when: collector_ready.rc == 0
       register: collector_copy
       changed_when: false
@@ -169,7 +180,7 @@
         src: "{{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}"
         dest: "{{ jmeter_local_logs_dir }}/latest"
         state: link
-      when: collector_ready.rc == 0
+      when: not ansible_check_mode and collector_ready.rc == 0
 
     - name: Cleanup collector pod (leave PVC)
       shell: kubectl delete pod/jmeter-collector-{{ jmeter_run_id }} -n {{ jmeter_namespace }} --ignore-not-found

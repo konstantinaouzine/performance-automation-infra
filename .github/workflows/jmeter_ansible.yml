@@ -10,13 +10,18 @@ on:
 
 jobs:
   run-ansible-jmeter:
-    runs-on: self-hosted
+    runs-on: [self-hosted, ansible, jmeter]
     timeout-minutes: 40
     env:
       LOGS_DIR: ${GITHUB_WORKSPACE}/jmeter_logs
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Debug workspace & list tests
+        run: |
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          ls -1 $GITHUB_WORKSPACE/ansible_jmeter/tests || { echo 'tests dir missing'; exit 1; }
 
       - name: Ensure Ansible
         run: |
@@ -35,6 +40,16 @@ jobs:
           fi
           kubectl version --client --output=yaml || true
 
+      - name: Activate minikube docker-env (if available)
+        run: |
+          if command -v minikube >/dev/null 2>&1; then
+            echo "Activating minikube docker-env";
+            eval $(minikube docker-env)
+            docker info 2>/dev/null | grep -i 'server version' || true
+          else
+            echo "minikube not found - using default docker context"
+          fi
+
       - name: Run Ansible JMeter playbook
         id: ansible_run
         run: |
@@ -42,6 +57,8 @@ jobs:
           TEST_FILE="${{ github.event.inputs.test_file }}"
           if [[ "$TEST_FILE" != *.jmx ]]; then TEST_FILE="${TEST_FILE}.jmx"; fi
           mkdir -p "$LOGS_DIR"
+          # Удалим прошлый Job с тем же префиксом (если остался Completed) чтобы гарантировать новый запуск
+          kubectl delete job -n load -l app=jmeter-loadgen --ignore-not-found || true
           ansible-playbook ansible_jmeter/jmeter_play.yml \
             -e jmeter_test_file="$TEST_FILE" \
             -e jmeter_local_logs_dir="$LOGS_DIR" || { echo 'Playbook failed'; exit 1; }
