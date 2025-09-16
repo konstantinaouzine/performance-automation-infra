@@ -108,6 +108,21 @@
         path: "{{ jmeter_local_logs_dir }}"
         state: directory
         mode: '0755'
+    - name: Create per-run directory early (even if pod/collector later fails)
+      file:
+        path: "{{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}"
+        state: directory
+        mode: '0755'
+      when: not ansible_check_mode
+    - name: Write run metadata
+      copy:
+        dest: "{{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}/run.meta"
+        content: |-
+          run_id={{ jmeter_run_id }}
+          test_file={{ jmeter_test_file_effective }}
+          image_tag={{ jmeter_image_tag }}
+          timestamp={{ jmeter_run_id }}
+      when: not ansible_check_mode
 
     - name: Wait for job to finish (complete or timeout)
       shell: kubectl wait --for=condition=complete job/jmeter-loadgen-{{ jmeter_run_id }} -n {{ jmeter_namespace }} --timeout=600s

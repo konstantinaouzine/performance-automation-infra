@@ -1,4 +1,4 @@
-name: jmeter_ansible
+name: workflow_jmeter_ansible
 
 on:
   workflow_dispatch:
@@ -54,21 +54,31 @@ jobs:
         id: ansible_run
         run: |
           set -e
-          TEST_FILE="${{ github.event.inputs.test_file }}"
-          if [[ "$TEST_FILE" != *.jmx ]]; then TEST_FILE="${TEST_FILE}.jmx"; fi
-          mkdir -p "$LOGS_DIR"
-          # Удалим прошлый Job с тем же префиксом (если остался Completed) чтобы гарантировать новый запуск
-          kubectl delete job -n load -l app=jmeter-loadgen --ignore-not-found || true
-          ansible-playbook ansible_jmeter/jmeter_play.yml \
-            -e jmeter_test_file="$TEST_FILE" \
-            -e jmeter_local_logs_dir="$LOGS_DIR" || { echo 'Playbook failed'; exit 1; }
+            TEST_FILE="${{ github.event.inputs.test_file }}"
+            if [[ "$TEST_FILE" != *.jmx ]]; then TEST_FILE="${TEST_FILE}.jmx"; fi
+            mkdir -p "$LOGS_DIR"
+            # Удалим прошлый Job с тем же префиксом (если остался Completed) чтобы гарантировать новый запуск
+            kubectl delete job -n load -l app=jmeter-loadgen --ignore-not-found || true
+            ansible-playbook ansible_jmeter/jmeter_play.yml \
+              -e jmeter_test_file="$TEST_FILE" \
+              -e jmeter_local_logs_dir="$LOGS_DIR" || { echo 'Playbook failed'; exit 1; }
 
       - name: Locate latest run directory
         id: locate
         run: |
           set -e
           if [ ! -d "$LOGS_DIR" ]; then echo "No logs dir" >&2; exit 1; fi
+          echo 'Existing entries:'
+          ls -l "$LOGS_DIR" || true
           LATEST=$(ls -1dt "$LOGS_DIR"/*/ 2>/dev/null | head -1 | sed 's:/*$::')
+          # Fallback to symlink 'latest'
+          if [ -z "$LATEST" ] && [ -L "$LOGS_DIR/latest" ]; then
+            LATEST=$(readlink -f "$LOGS_DIR/latest")
+          fi
+          # Fallback to any directory if glob with slash failed
+          if [ -z "$LATEST" ]; then
+            LATEST=$(find "$LOGS_DIR" -maxdepth 1 -mindepth 1 -type d | sort -r | head -1)
+          fi
           echo "Latest run dir: $LATEST"
           echo "latest_dir=$LATEST" >> $GITHUB_OUTPUT
           ls -1 "$LATEST" || true
