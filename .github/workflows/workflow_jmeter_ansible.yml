@@ -115,13 +115,45 @@ jobs:
           echo "Using LATEST=$LATEST"
           echo '--- LAST 10 LINES ---'
           tail -n 10 "$JTL" || true
-          TOTAL=$(grep -c '<sample ' "$JTL" || echo 0)
-          ERR=$(grep -c 's="false"' "$JTL" || echo 0)
+
+          echo '--- JTL HEADER ---'
+          head -1 "$JTL" || true
+
+          # Detect XML vs CSV
+          if grep -q '<sample ' "$JTL"; then
+            FORMAT=xml
+            TOTAL=$(grep -c '<sample ' "$JTL" || echo 0)
+            ERR=$(grep -c '<sample [^>]*s="false"' "$JTL" || echo 0)
+          else
+            FORMAT=csv
+            # Strip CR, ignore blank lines. Assume first line header if contains 'success'
+            HEADER=$(head -1 "$JTL" | tr -d '\r') || HEADER=""
+            if echo "$HEADER" | grep -qi 'success'; then
+              # Count data lines (exclude header & blanks)
+              TOTAL=$(tail -n +2 "$JTL" | tr -d '\r' | grep -cv '^$' || echo 0)
+              ERR=$(tail -n +2 "$JTL" | tr -d '\r' | grep -c ',false,' || echo 0)
+            else
+              # Fallback: count all non-empty lines
+              TOTAL=$(grep -cv '^$' "$JTL" || echo 0)
+              ERR=0
+            fi
+          fi
+
+          # Sanitize numeric (remove anything after first non-digit)
+          TOTAL=$(echo "$TOTAL" | sed 's/[^0-9].*$//')
+          ERR=$(echo "$ERR" | sed 's/[^0-9].*$//')
+
+          if [ -z "$TOTAL" ] || ! echo "$TOTAL" | grep -Eq '^[0-9]+$'; then TOTAL=0; fi
+          if [ -z "$ERR" ]   || ! echo "$ERR"   | grep -Eq '^[0-9]+$'; then ERR=0; fi
+
           if [ "$TOTAL" -eq 0 ]; then
             PCT="0.00"
           else
-            PCT=$(awk -v e="$ERR" -v t="$TOTAL" 'BEGIN{printf "%.2f", (e/t*100)}')
+            # Use awk for percentage
+            PCT=$(awk -v e="$ERR" -v t="$TOTAL" 'BEGIN{ if(t==0){print "0.00"} else {printf "%.2f", (e/t*100)} }') || PCT="0.00"
           fi
+
+          echo "Format: $FORMAT Total=$TOTAL Errors=$ERR Error%=$PCT"
           echo "Samples: $TOTAL Errors: $ERR ($PCT%)"
           # SLA: fail if >5%
           if awk -v p="$PCT" 'BEGIN{exit (p>5)?0:1}'; then
