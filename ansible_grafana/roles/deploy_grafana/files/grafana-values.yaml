@@ -13,6 +13,26 @@ service:
   type: ClusterIP
   port: 3000
 
+# Enable image rendering (added)
+plugins:
+  - grafana-image-renderer
+
+imageRenderer:
+  enabled: true
+  # Optional tuning (keep default unless issues)
+  # renderingConcurrency: 2
+  # chromeBin: /usr/lib/chromium/chrome
+
+grafana.ini:
+  rendering:
+    # Align with GF_RENDERING_SERVER_URL / GF_RENDERING_CALLBACK_URL env variables (separate renderer pod)
+    server_url: http://grafana-image-renderer.monitoring:8081/render
+    callback_url: http://grafana.monitoring:3000/
+    concurrent_render_request_limit: 5
+  plugins:
+    enable_alpha: false
+    app_tls_skip_verify_insecure: true
+
 dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
