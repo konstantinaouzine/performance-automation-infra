@@ -20,7 +20,6 @@ jobs:
     env:
       # Use GitHub expression so путь разворачивается корректно, не буквальная строка
       LOGS_DIR: ${{ github.workspace }}/jmeter_logs
-      HAS_SMTP: ${{ (secrets.SMTP_SERVER != '' && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '') && 'yes' || 'no' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -185,37 +184,70 @@ jobs:
             echo 'SLA OK'
           fi
 
-      - name: Email report
-        if: ${{ always() && github.event.inputs.email_to != '' && env.HAS_SMTP == 'yes' }}
+      - name: Email report (SendGrid API)
+        if: ${{ always() && github.event.inputs.email_to != '' && secrets.SENDGRID_API_KEY != '' }}
         env:
-          SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: ${{ secrets.SMTP_SERVER }}
-          server_port: ${{ secrets.SMTP_PORT || 587 }}
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "JMeter Load Test ${{ job.status }} | ${{ github.repository }} #${{ github.run_number }}"
-          to: ${{ github.event.inputs.email_to }}
-          from: ${{ secrets.SMTP_FROM || 'loadtest-bot@example.com' }}
-          # secure=true only for implicit TLS (usually port 465); for 587 STARTTLS keep false unless SMTP_SECURE secret explicitly 'true'
-          secure: ${{ env.SMTP_SECURE == 'true' || secrets.SMTP_PORT == '465' }}
-          attachments: |
-            ${{ steps.locate.outputs.latest_dir }}/results.jtl
-            ${{ steps.locate.outputs.latest_dir }}/jmeter.log
-          body: |
-            Repository: ${{ github.repository }}
-            Workflow: ${{ github.workflow }}
-            Run: #${{ github.run_number }}
-            Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          SENDGRID_FROM: ${{ secrets.SENDGRID_FROM || secrets.SMTP_FROM || 'loadtest-bot@example.com' }}
+        run: |
+          set -euo pipefail
+          LATEST='${{ steps.locate.outputs.latest_dir }}'
+          TO_RAW='${{ github.event.inputs.email_to }}'
+          # Parse recipients
+          RECIPIENTS_JSON=""
+          IFS=',' read -ra ADDR <<< "$TO_RAW"
+          for a in "${ADDR[@]}"; do
+            a=$(echo "$a" | xargs)
+            [ -z "$a" ] && continue
+            RECIPIENTS_JSON+="{\"email\":\"$a\"},"
+          done
+          RECIPIENTS_JSON=${RECIPIENTS_JSON%,}
+          [ -z "$RECIPIENTS_JSON" ] && { echo 'No recipients'; exit 0; }
 
-            Status: ${{ job.status }}
-            Samples: ${{ steps.sla.outputs.total }}
-            Errors: ${{ steps.sla.outputs.errors }}
-            Error %: ${{ steps.sla.outputs.error_pct }}
-            Format: ${{ steps.sla.outputs.format }}
+          # Build body text
+          BODY_TEXT="Repository: ${GITHUB_REPOSITORY}\nWorkflow: ${GITHUB_WORKFLOW}\nRun: #${GITHUB_RUN_NUMBER}\nRun URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\n\nStatus: ${{ job.status }}\nSamples: ${{ steps.sla.outputs.total }}\nErrors: ${{ steps.sla.outputs.errors }}\nError %: ${{ steps.sla.outputs.error_pct }}\nFormat: ${{ steps.sla.outputs.format }}\n\n(Automated email)"
 
-            (Automated email)
+          # Attachments (limit 6MB each)
+          ATTACH_JSON=""
+            add_attach() {
+              local f="$1"; local name="$2"; local max=6000000
+              [ ! -f "$f" ] && return 0
+              local size; size=$(stat -c%s "$f" || echo 0)
+              if [ "$size" -gt "$max" ]; then
+                echo "Skipping $name (size ${size} > ${max})"; return 0
+              fi
+              local b64; if base64 -w 0 /dev/null 2>/dev/null; then b64=$(base64 -w 0 "$f"); else b64=$(base64 "$f"); fi
+              [ -n "$ATTACH_JSON" ] && ATTACH_JSON+=",";
+              ATTACH_JSON+="{\"content\":\"$b64\",\"type\":\"text/plain\",\"filename\":\"$name\"}"
+            }
+          add_attach "$LATEST/results.jtl" "results.jtl"
+          add_attach "$LATEST/jmeter.log" "jmeter.log"
+
+          # Escape body for JSON (python for reliability)
+          BODY_ESCAPED=$(printf '%s' "$BODY_TEXT" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+          JSON_PAYLOAD='{'
+          JSON_PAYLOAD+="\"personalizations\":[{\"to\":["$RECIPIENTS_JSON"]}]" # will fix below
+          # Fix recipients array (remove quotes around JSON objects)
+          JSON_PAYLOAD=$(echo "$JSON_PAYLOAD" | sed 's/\"{/{/g; s/}\"/}/g')
+          JSON_PAYLOAD+=' ,"from":{"email":"'"${SENDGRID_FROM}"'"}'
+          JSON_PAYLOAD+=' ,"subject":"JMeter Load Test ${{ job.status }} | ${{ github.repository }} #${{ github.run_number }}"'
+          JSON_PAYLOAD+=' ,"content":[{"type":"text/plain","value":'"$BODY_ESCAPED"'}]'
+          if [ -n "$ATTACH_JSON" ]; then
+            JSON_PAYLOAD+=' ,"attachments":['"$ATTACH_JSON"']'
+          fi
+          JSON_PAYLOAD+='}'
+
+          echo "Payload size: ${#JSON_PAYLOAD} chars"
+          HTTP_CODE=$(curl -s -o resp.txt -w '%{http_code}' -X POST https://api.sendgrid.com/v3/mail/send \
+            -H "Authorization: Bearer ${SENDGRID_API_KEY}" -H 'Content-Type: application/json' \
+            -d "$JSON_PAYLOAD") || { echo 'curl failed'; exit 1; }
+          echo "SendGrid response: $HTTP_CODE"
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo 'Email sent.'
+          else
+            echo 'Email failed:' >&2; cat resp.txt >&2; exit 1
+          fi
+          rm -f resp.txt || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
