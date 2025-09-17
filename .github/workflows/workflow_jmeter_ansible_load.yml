@@ -243,7 +243,8 @@ jobs:
           # Format examples (comma separated):
           #   dashboardUID1:1,2,8;dashboardUID2;dashboardUID3:5
           # If panel list omitted -> full dashboard render
-          GRAFANA_SPECS: ${{ vars.GRAFANA_SPECS || '' }}
+          # Can be stored either as secret (preferred if it might contain internal identifiers) or repository variable.
+          GRAFANA_SPECS: ${{ secrets.GRAFANA_SPECS || vars.GRAFANA_SPECS || '' }}
         run: |
           set -euo pipefail
           if [ -z "${GRAFANA_URL:-}" ] || [ -z "${GRAFANA_API_TOKEN:-}" ]; then
@@ -252,6 +253,7 @@ jobs:
           END='${{ steps.mark_end.outputs.end_ms }}'
           if [ -z "$START" ]; then echo "Missing start time"; exit 0; fi
           if [ -z "$END" ]; then echo "Missing end time (maybe earlier failure) -> use now"; END=$(date +%s%3N); fi
+          echo "GRAFANA_SPECS length=${#GRAFANA_SPECS}"
           if [ -z "${GRAFANA_SPECS}" ]; then echo "No GRAFANA_SPECS provided -> skip"; exit 0; fi
           OUT_DIR="grafana_snapshots"
           mkdir -p "$OUT_DIR"
