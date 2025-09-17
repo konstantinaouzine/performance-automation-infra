@@ -191,67 +191,141 @@ jobs:
           SENDGRID_FROM: ${{ secrets.SENDGRID_FROM || secrets.SMTP_FROM || 'loadtest-bot@example.com' }}
         run: |
           set -euo pipefail
+          # 1. Guard API key
           if [ -z "${SENDGRID_API_KEY:-}" ]; then
-            echo 'SENDGRID_API_KEY is empty, skip email.'
+            echo 'SENDGRID_API_KEY empty -> skip email'
             exit 0
           fi
+
+          # 2. Locate run dir
           LATEST='${{ steps.locate.outputs.latest_dir }}'
-          TO_RAW='${{ github.event.inputs.email_to }}'
-          # Parse recipients
-          RECIPIENTS_JSON=""
-          IFS=',' read -ra ADDR <<< "$TO_RAW"
-          for a in "${ADDR[@]}"; do
-            a=$(echo "$a" | xargs)
-            [ -z "$a" ] && continue
-            RECIPIENTS_JSON+="{\"email\":\"$a\"},"
-          done
-          RECIPIENTS_JSON=${RECIPIENTS_JSON%,}
-          [ -z "$RECIPIENTS_JSON" ] && { echo 'No recipients'; exit 0; }
-
-          # Build body text
-          BODY_TEXT="Repository: ${GITHUB_REPOSITORY}\nWorkflow: ${GITHUB_WORKFLOW}\nRun: #${GITHUB_RUN_NUMBER}\nRun URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\n\nStatus: ${{ job.status }}\nSamples: ${{ steps.sla.outputs.total }}\nErrors: ${{ steps.sla.outputs.errors }}\nError %: ${{ steps.sla.outputs.error_pct }}\nFormat: ${{ steps.sla.outputs.format }}\n\n(Automated email)"
-
-          # Attachments (limit 6MB each)
-          ATTACH_JSON=""
-            add_attach() {
-              local f="$1"; local name="$2"; local max=6000000
-              [ ! -f "$f" ] && return 0
-              local size; size=$(stat -c%s "$f" || echo 0)
-              if [ "$size" -gt "$max" ]; then
-                echo "Skipping $name (size ${size} > ${max})"; return 0
-              fi
-              local b64; if base64 -w 0 /dev/null 2>/dev/null; then b64=$(base64 -w 0 "$f"); else b64=$(base64 "$f"); fi
-              [ -n "$ATTACH_JSON" ] && ATTACH_JSON+=",";
-              ATTACH_JSON+="{\"content\":\"$b64\",\"type\":\"text/plain\",\"filename\":\"$name\"}"
-            }
-          add_attach "$LATEST/results.jtl" "results.jtl"
-          add_attach "$LATEST/jmeter.log" "jmeter.log"
-
-          # Escape body for JSON (python for reliability)
-          BODY_ESCAPED=$(printf '%s' "$BODY_TEXT" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
-          JSON_PAYLOAD='{'
-          JSON_PAYLOAD+="\"personalizations\":[{\"to\":["$RECIPIENTS_JSON"]}]" # will fix below
-          # Fix recipients array (remove quotes around JSON objects)
-          JSON_PAYLOAD=$(echo "$JSON_PAYLOAD" | sed 's/\"{/{/g; s/}\"/}/g')
-          JSON_PAYLOAD+=' ,"from":{"email":"'"${SENDGRID_FROM}"'"}'
-          JSON_PAYLOAD+=' ,"subject":"JMeter Load Test ${{ job.status }} | ${{ github.repository }} #${{ github.run_number }}"'
-          JSON_PAYLOAD+=' ,"content":[{"type":"text/plain","value":'"$BODY_ESCAPED"'}]'
-          if [ -n "$ATTACH_JSON" ]; then
-            JSON_PAYLOAD+=' ,"attachments":['"$ATTACH_JSON"']'
+          if [ -z "$LATEST" ] || [ ! -d "$LATEST" ]; then
+            echo "No latest run dir -> skip"
+            exit 0
           fi
-          JSON_PAYLOAD+='}'
 
-          echo "Payload size: ${#JSON_PAYLOAD} chars"
-          HTTP_CODE=$(curl -s -o resp.txt -w '%{http_code}' -X POST https://api.sendgrid.com/v3/mail/send \
-            -H "Authorization: Bearer ${SENDGRID_API_KEY}" -H 'Content-Type: application/json' \
-            -d "$JSON_PAYLOAD") || { echo 'curl failed'; exit 1; }
-          echo "SendGrid response: $HTTP_CODE"
+          # 3. Normalize recipients
+          RAW='${{ github.event.inputs.email_to }}'
+          NORMALIZED=$(echo "$RAW" | tr '\n' ',' | tr ' ' ',' | sed 's/,,*/,/g; s/^,//; s/,$//')
+          if [ -z "$NORMALIZED" ]; then
+            echo "No recipients after normalization"
+            exit 0
+          fi
+
+          export NORMALIZED LATEST
+          export JOB_STATUS='${{ job.status }}'
+          export SAMPLES='${{ steps.sla.outputs.total }}'
+          export ERRORS='${{ steps.sla.outputs.errors }}'
+          export ERROR_PCT='${{ steps.sla.outputs.error_pct }}'
+          export FORMAT='${{ steps.sla.outputs.format }}'
+
+          echo "Building payload.json (attachments may be compressed if large)"
+
+          python3 - <<'PY'
+          import os, json, base64, gzip, shutil, pathlib, sys
+
+          recips = [r.strip() for r in os.environ['NORMALIZED'].split(',') if r.strip()]
+          if not recips:
+              print("No valid recipients")
+              sys.exit(0)
+
+          latest = os.environ['LATEST']
+          repo   = os.environ.get('GITHUB_REPOSITORY','')
+          workflow = os.environ.get('GITHUB_WORKFLOW','')
+          run_number = os.environ.get('GITHUB_RUN_NUMBER','')
+          run_id  = os.environ.get('GITHUB_RUN_ID','')
+          server  = os.environ.get('GITHUB_SERVER_URL','https://github.com')
+          status  = os.environ.get('JOB_STATUS','unknown')
+          samples = os.environ.get('SAMPLES','0')
+          errors  = os.environ.get('ERRORS','0')
+          error_pct = os.environ.get('ERROR_PCT','0')
+          fmt = os.environ.get('FORMAT','csv')
+          from_email = os.environ.get('SENDGRID_FROM','loadtest-bot@example.com')
+
+          body = (
+              f"Repository: {repo}\n"
+              f"Workflow: {workflow}\n"
+              f"Run: #{run_number}\n"
+              f"Run URL: {server}/{repo}/actions/runs/{run_id}\n\n"
+              f"Status: {status}\n"
+              f"Samples: {samples}\n"
+              f"Errors: {errors}\n"
+              f"Error %: {error_pct}\n"
+              f"Format: {fmt}\n\n"
+              "(Automated email)"
+          )
+
+          # Attachment policies
+          MAX_BYTES   = 1_500_000   # hard cap per file (post base64 will grow ~33%)
+          COMPRESS_THRESHOLD = 750_000  # compress if bigger than this before encoding
+
+          attachments = []
+          for name in ("results.jtl", "jmeter.log"):
+              path = os.path.join(latest, name)
+              if not os.path.isfile(path):
+                  continue
+              size = os.path.getsize(path)
+              use_path = path
+              if size > COMPRESS_THRESHOLD:
+                  gz = path + ".gz"
+                  with open(path, "rb") as fin, gzip.open(gz, "wb", compresslevel=5) as fout:
+                      shutil.copyfileobj(fin, fout)
+                  if os.path.getsize(gz) < size:
+                      use_path = gz
+                  else:
+                      try: os.remove(gz)
+                      except OSError: pass
+              if os.path.getsize(use_path) > MAX_BYTES:
+                  print(f"Skip {use_path} (too large after compression check)")
+                  continue
+              with open(use_path, "rb") as f:
+                  b64 = base64.b64encode(f.read()).decode()
+              attachments.append({
+                  "content": b64,
+                  "type": "text/plain",
+                  "filename": pathlib.Path(use_path).name
+              })
+
+          payload = {
+              "personalizations": [{
+                  "to": [{"email": r} for r in recips]
+              }],
+              "from": {"email": from_email},
+              "subject": f"JMeter Load Test {status} | {repo} #{run_number}",
+              "content": [{
+                  "type": "text/plain",
+                  "value": body
+              }]
+          }
+          if attachments:
+              payload["attachments"] = attachments
+
+          with open("payload.json", "w") as f:
+              json.dump(payload, f)
+
+          print("Payload size (bytes):", os.path.getsize("payload.json"))
+          if attachments:
+              print("Attachments included:", [a["filename"] for a in attachments])
+          PY
+
+          # 4. Send
+          HTTP_CODE=$(curl -s -o resp.txt -w '%{http_code}' \
+            -X POST https://api.sendgrid.com/v3/mail/send \
+            -H "Authorization: Bearer ${SENDGRID_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data-binary @payload.json) || { echo 'curl failed'; exit 1; }
+
+          echo "HTTP code: $HTTP_CODE"
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
             echo 'Email sent.'
           else
-            echo 'Email failed:' >&2; cat resp.txt >&2; exit 1
+            echo 'Email failed (first 2KB of response):' >&2
+            head -c 2048 resp.txt >&2 || true
+            echo >&2
+            exit 1
           fi
-          rm -f resp.txt || true
+
+          rm -f resp.txt payload.json || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
