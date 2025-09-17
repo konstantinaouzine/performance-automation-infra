@@ -187,6 +187,8 @@ jobs:
 
       - name: Email report
         if: ${{ always() && github.event.inputs.email_to != '' && env.HAS_SMTP == 'yes' }}
+        env:
+          SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
@@ -196,7 +198,8 @@ jobs:
           subject: "JMeter Load Test ${{ job.status }} | ${{ github.repository }} #${{ github.run_number }}"
           to: ${{ github.event.inputs.email_to }}
           from: ${{ secrets.SMTP_FROM || 'loadtest-bot@example.com' }}
-          secure: true
+          # secure=true only for implicit TLS (usually port 465); for 587 STARTTLS keep false unless SMTP_SECURE secret explicitly 'true'
+          secure: ${{ env.SMTP_SECURE == 'true' || secrets.SMTP_PORT == '465' }}
           attachments: |
             ${{ steps.locate.outputs.latest_dir }}/results.jtl
             ${{ steps.locate.outputs.latest_dir }}/jmeter.log
