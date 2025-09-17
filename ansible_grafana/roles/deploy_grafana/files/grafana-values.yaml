@@ -22,6 +22,26 @@ imageRenderer:
   # Optional tuning (keep default unless issues)
   # renderingConcurrency: 2
   # chromeBin: /usr/lib/chromium/chrome
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    - name: ENABLE_METRICS
+      value: "true"
+    - name: IGNORE_HTTPS_ERRORS
+      value: "true"
+    - name: GPU_ENABLED
+      value: "false"
+    - name: TZ
+      value: "UTC"
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
 
 grafana.ini:
   rendering:
