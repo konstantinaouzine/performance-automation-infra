@@ -185,12 +185,16 @@ jobs:
           fi
 
       - name: Email report (SendGrid API)
-        if: ${{ always() && github.event.inputs.email_to != '' && secrets.SENDGRID_API_KEY != '' }}
+        if: ${{ always() && github.event.inputs.email_to != '' }}
         env:
           SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
           SENDGRID_FROM: ${{ secrets.SENDGRID_FROM || secrets.SMTP_FROM || 'loadtest-bot@example.com' }}
         run: |
           set -euo pipefail
+          if [ -z "${SENDGRID_API_KEY:-}" ]; then
+            echo 'SENDGRID_API_KEY is empty, skip email.'
+            exit 0
+          fi
           LATEST='${{ steps.locate.outputs.latest_dir }}'
           TO_RAW='${{ github.event.inputs.email_to }}'
           # Parse recipients
