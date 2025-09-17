@@ -19,17 +19,16 @@ plugins:
 
 imageRenderer:
   enabled: true
-  # Optional tuning (keep default unless issues)
-  # renderingConcurrency: 2
+  renderingConcurrency: 1
   # chromeBin: /usr/lib/chromium/chrome
   replicas: 1
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: 1000m
+      memory: 1024Mi
   env:
     - name: ENABLE_METRICS
       value: "true"
