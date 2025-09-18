@@ -240,6 +240,13 @@ jobs:
           # Use port-forward URL if preset secret absent
           GRAFANA_URL: ${{ secrets.GRAFANA_URL || steps.grafana_pf.outputs.grafana_url }}
           GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
+          GRAFANA_RENDER_WIDTH: 1500
+          GRAFANA_RENDER_HEIGHT: 850
+          GRAFANA_RENDER_DELAY_SECS: 3
+          # If true -> after individual panel downloads, combine per dashboard into a grid PNG
+          GRAFANA_COMBINE_PANELS: true
+          # Grid layout hint for combination (e.g. 2x2 for 4 panels). Format COLSxROWS; rows auto if omitted.
+          GRAFANA_COMBINE_GRID: 2x2
           # Format examples (comma separated):
           #   dashboardUID1:1,2,8;dashboardUID2;dashboardUID3:5
           # If panel list omitted -> full dashboard render
@@ -260,6 +267,8 @@ jobs:
           authHeader="Authorization: Bearer ${GRAFANA_API_TOKEN}"
           IFS=';' read -ra DASH <<< "$GRAFANA_SPECS"
           for spec in "${DASH[@]}"; do
+            # Throttle between dashboards to reduce renderer load
+            sleep "$GRAFANA_RENDER_DELAY_SECS"
             spec=$(echo "$spec" | xargs)
             [ -z "$spec" ] && continue
             uid=${spec%%:*}
@@ -273,13 +282,40 @@ jobs:
             if [ -z "$DASH_JSON" ]; then echo "Failed to fetch dashboard $uid"; continue; fi
             slug=$(echo "$DASH_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin);print(d.get("meta",{}).get("slug","dashboard"))')
             if [ -z "$panels_part" ]; then
-              # Full dashboard render
+              # Full dashboard render with simple retry (up to 3 attempts)
               file="$OUT_DIR/${uid}_full.png"
-              url="$GRAFANA_URL/render/d/$uid/$slug?from=$START&to=$END&width=1600&height=900&tz=UTC"
+              url="$GRAFANA_URL/render/d/$uid/$slug?from=$START&to=$END&width=${GRAFANA_RENDER_WIDTH}&height=${GRAFANA_RENDER_HEIGHT}&tz=UTC"
               echo "Downloading full dashboard -> $file"
-              curl -sf -H "$authHeader" -o "$file" "$url" || { echo "Failed dashboard $uid"; rm -f "$file"; }
+              success=0
+              for attempt in 1 2 3; do
+                if curl -sf -H "$authHeader" -o "$file" "$url"; then
+                  success=1; break
+                else
+                  echo "Attempt $attempt failed for $uid; retrying...";
+                  sleep 2
+                fi
+              done
+              if [ $success -ne 1 ]; then
+                echo "Failed dashboard $uid after retries"
+                rm -f "$file"
+                # If the dashboard is heavy (e.g., app-perf) try fallback: render subset of key panels
+                if [ "$uid" = "app-perf" ]; then
+                  echo "Fallback: rendering key panels for $uid"
+                  KEY_PANELS="101,104,111,141,151"
+                  IFS=',' read -ra KP <<< "$KEY_PANELS"
+                  for kp in "${KP[@]}"; do
+                    kp=$(echo "$kp"|xargs)
+                    [ -z "$kp" ] && continue
+                    f2="$OUT_DIR/${uid}_panel_${kp}_fallback.png"
+                    u2="$GRAFANA_URL/render/d-solo/$uid/$slug?panelId=$kp&from=$START&to=$END&width=${GRAFANA_RENDER_WIDTH}&height=500&tz=UTC"
+                    echo "Downloading fallback panel $kp -> $f2"
+                    curl -sf -H "$authHeader" -o "$f2" "$u2" || { echo "Failed fallback panel $kp"; rm -f "$f2"; }
+                  done
+                fi
+              fi
             else
               IFS=',' read -ra PANELS <<< "$panels_part"
+              PANEL_FILES=()
               for pid in "${PANELS[@]}"; do
                 pid=$(echo "$pid" | xargs)
                 [ -z "$pid" ] && continue
@@ -287,10 +323,48 @@ jobs:
                 url="$GRAFANA_URL/render/d-solo/$uid/$slug?panelId=$pid&from=$START&to=$END&width=1600&height=500&tz=UTC"
                 echo "Downloading panel $pid -> $file"
                 curl -sf -H "$authHeader" -o "$file" "$url" || { echo "Failed panel $pid of $uid"; rm -f "$file"; }
+                [ -f "$file" ] && PANEL_FILES+=("$file")
               done
+              # Combine panels if requested and we have at least 2 files
+              if [ "${GRAFANA_COMBINE_PANELS,,}" = "true" ] && [ ${#PANEL_FILES[@]} -ge 1 ]; then
+                if ! command -v montage >/dev/null 2>&1; then
+                  echo "Installing ImageMagick (montage) for panel combination";
+                  sudo apt-get update -y && sudo apt-get install -y imagemagick || echo "ImageMagick install failed (continuing without combine)";
+                fi
+                if command -v montage >/dev/null 2>&1; then
+                  GRID=${GRAFANA_COMBINE_GRID:-}
+                  COLS=""; ROWS=""
+                  if echo "$GRID" | grep -Eq '^[0-9]+x[0-9]+$'; then
+                    COLS=${GRID%x*}; ROWS=${GRID#*x}
+                  elif echo "$GRID" | grep -Eq '^[0-9]+x$'; then
+                    COLS=${GRID%x}; ROWS=0
+                  fi
+                  # If rows not specified compute rows = ceil(n/COLS)
+                  if [ -n "$COLS" ] && [ -z "$ROWS" -o "$ROWS" = "0" ]; then
+                    N=${#PANEL_FILES[@]}
+                    ROWS=$(( (N + COLS - 1) / COLS ))
+                  fi
+                  COMBINED="$OUT_DIR/${uid}_combined.png"
+                  echo "Combining ${#PANEL_FILES[@]} panels into $COMBINED (grid ${COLS}x${ROWS})"
+                  # Use +geometry to avoid gaps; background white for stats
+                  montage "${PANEL_FILES[@]}" -tile ${COLS}x${ROWS} -geometry +0+0 -background '#ffffff' "$COMBINED" || echo "Montage combine failed"
+                else
+                  echo "montage not available; skipping combine"
+                fi
+              fi
             fi
           done
           echo "Snapshot files:"; ls -1 "$OUT_DIR" || echo "(none)"
+          # Detect placeholder images (renderer missing) by checking small PNGs containing the error text
+          for f in "$OUT_DIR"/*.png; do
+            [ -e "$f" ] || continue
+            SIZE=$(stat -c%s "$f" || echo 0)
+            if [ "$SIZE" -lt 15000 ]; then
+              if strings "$f" 2>/dev/null | grep -qi 'No image renderer'; then
+                echo "WARNING: Placeholder image (renderer not active yet): $f" >&2
+              fi
+            fi
+          done
 
       - name: Cleanup port-forward
         if: ${{ always() && steps.grafana_pf.outputs.pf_pid != '' }}

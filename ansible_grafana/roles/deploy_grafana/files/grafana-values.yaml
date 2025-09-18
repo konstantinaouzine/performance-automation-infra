@@ -219,6 +219,25 @@ dashboards:
           "title": "JMeter Performance Overview",
           "version": 1
         }
+    jmeter-report:
+      json: |
+        {
+          "uid": "jmeter-report",
+          "title": "JMeter Performance Report",
+          "tags": ["report","jmeter"],
+          "timezone": "browser",
+          "schemaVersion": 30,
+          "version": 1,
+          "time": {"from": "now-1h", "to": "now"},
+          "templating": {"list": [ { "name": "run_id", "type": "query", "datasource": "Prometheus", "query": "label_values(http_requests, run_id)", "refresh": 2, "includeAll": true, "multi": true, "allValue": ".*", "current": {"text": "All", "value": ["$__all"], "selected": true } } ]},
+          "panels": [
+            {"type":"timeseries","title":"CPU Usage % (Node)","id":1,"datasource":"Prometheus","gridPos":{"h":8,"w":12,"x":0,"y":0},"targets":[{"refId":"A","expr":"100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))","legendFormat":"{{instance}}"}]},
+            {"type":"timeseries","title":"Memory Usage (Pod)","id":2,"datasource":"Prometheus","gridPos":{"h":8,"w":12,"x":12,"y":0},"targets":[{"refId":"A","expr":"sum by (pod) (container_memory_usage_bytes)","legendFormat":"{{pod}}"}]},
+            {"type":"timeseries","title":"HTTP Latency p95","id":5,"datasource":"Prometheus","gridPos":{"h":8,"w":12,"x":0,"y":8},"targets":[{"refId":"A","expr":"histogram_quantile(0.95, sum by (le) (rate(http_latency_hist_bucket{run_id=~\"$run_id\"}[5m])))","legendFormat":"p95"}]},
+            {"type":"timeseries","title":"HTTP Error Rate","id":7,"datasource":"Prometheus","gridPos":{"h":8,"w":12,"x":12,"y":8},"targets":[{"refId":"A","expr":"(sum(rate(http_failure{run_id=~\"$run_id\"}[5m])) or vector(0))","legendFormat":"errors"}]}
+          ],
+          "refresh": "10s"
+        }
     postgres:
       json: |
         {
@@ -340,6 +359,25 @@ dashboards:
               "fieldConfig":{"defaults":{"unit":"megabytes"},"overrides":[]}
             }
           ]
+        }
+    pg-report:
+      json: |
+        {
+          "uid": "pg-report",
+          "title": "PostgreSQL Performance Report",
+          "tags": ["report","postgres"],
+          "timezone": "browser",
+          "schemaVersion": 30,
+          "version": 1,
+          "time": {"from": "now-1h", "to": "now"},
+          "templating": {"list": [ {"name": "datname", "type": "query", "datasource": "Prometheus", "query": "label_values(pg_database_size_bytes, datname)", "refresh": 2, "includeAll": true, "multi": true, "allValue": ".*", "current": {"text": "All", "value": ["$__all"], "selected": true } } ] },
+          "panels": [
+            {"type":"stat","title":"TPS (avg 5m)","id":2,"gridPos":{"h":6,"w":6,"x":0,"y":0},"datasource":"Prometheus","targets":[{"refId":"A","expr":"sum(rate(pg_stat_database_xact_commit{datname=~\"$datname\"}[$__rate_interval]) + rate(pg_stat_database_xact_rollback{datname=~\"$datname\"}[$__rate_interval]))"}]},
+            {"type":"stat","title":"Active Connections","id":3,"gridPos":{"h":6,"w":6,"x":6,"y":0},"datasource":"Prometheus","targets":[{"refId":"A","expr":"sum(pg_stat_activity_count{datname=~\"$datname\"})"}]},
+            {"type":"timeseries","title":"Cache Hit Ratio %","id":16,"gridPos":{"h":6,"w":6,"x":12,"y":0},"datasource":"Prometheus","targets":[{"refId":"A","expr":"(sum by (datname) (pg_statio_user_tables_heap_blocks_hit{datname=~\"$datname\"}))/(sum by (datname) (pg_statio_user_tables_heap_blocks_hit{datname=~\"$datname\"} + pg_statio_user_tables_heap_blocks_read{datname=~\"$datname\"})) * 100"}]},
+            {"type":"timeseries","title":"Database Sizes (MB)","id":19,"gridPos":{"h":6,"w":6,"x":18,"y":0},"datasource":"Prometheus","targets":[{"refId":"A","expr":"pg_database_size_bytes{datname=~\"$datname\"}/1024/1024"}]}
+          ],
+          "refresh": "10s"
         }
     springboot-app:
       json: |
@@ -525,6 +563,28 @@ dashboards:
               "description":"Time since earliest instance start." 
             }
           ]
+        }
+    app-report:
+      json: |
+        {
+          "uid": "app-report",
+          "title": "Spring Boot App Report",
+          "tags": ["report","springboot"],
+          "timezone": "browser",
+          "schemaVersion": 38,
+          "version": 1,
+          "time": {"from": "now-1h", "to": "now"},
+          "templating": {"list": [
+            {"name":"job","type":"query","datasource":"Prometheus","query":"label_values(http_server_requests_milliseconds_count, job)","includeAll":true,"multi":true,"allValue":".*","refresh":2,"current":{"text":"app/springboot-app","value":"app/springboot-app"}},
+            {"name":"application","type":"query","datasource":"Prometheus","query":"label_values(http_server_requests_milliseconds_count{job=~\"$job\"}, application)","includeAll":true,"multi":true,"allValue":".*","refresh":2,"current":{"text":"springboot-app","value":"springboot-app"}}
+          ] },
+          "panels": [
+            {"type":"timeseries","title":"RPS (all)","id":101,"gridPos":{"h":8,"w":12,"x":0,"y":0},"datasource":"Prometheus","targets":[{"refId":"A","expr":"sum(rate(http_server_requests_milliseconds_count{job=~\"$job\",application=~\"$application\"}[$__rate_interval]))","legendFormat":"rps"}]},
+            {"type":"timeseries","title":"Error %","id":104,"gridPos":{"h":8,"w":12,"x":12,"y":0},"datasource":"Prometheus","targets":[{"refId":"A","expr":"(sum(rate(http_server_requests_milliseconds_count{job=~\"$job\",application=~\"$application\",status=~\"5..\"}[$__rate_interval])) / sum(rate(http_server_requests_milliseconds_count{job=~\"$job\",application=~\"$application\"}[$__rate_interval]))) * 100","legendFormat":"err%"}]},
+            {"type":"timeseries","title":"Latency p95 (ms)","id":111,"gridPos":{"h":8,"w":12,"x":0,"y":8},"datasource":"Prometheus","targets":[{"refId":"P95","expr":"histogram_quantile(0.95, sum by (le) (rate(http_server_requests_milliseconds_bucket{job=~\"$job\",application=~\"$application\"}[5m])))","legendFormat":"p95"}]},
+            {"type":"timeseries","title":"Heap Used vs Max","id":141,"gridPos":{"h":8,"w":12,"x":12,"y":8},"datasource":"Prometheus","targets":[{"refId":"Live","expr":"sum(jvm_gc_live_data_size_bytes{job=~\"$job\",application=~\"$application\"})"},{"refId":"Max","expr":"sum(jvm_gc_max_data_size_bytes{job=~\"$job\",application=~\"$application\"})"}]}
+          ],
+          "refresh": "10s"
         }
 datasources:
   datasources.yaml:
