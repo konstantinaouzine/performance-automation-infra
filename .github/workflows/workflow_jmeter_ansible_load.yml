@@ -12,6 +12,26 @@ on:
         description: 'Emails for report (use comma)'
         required: false
         default: ''
+      grafana_url:
+        description: 'Optional Grafana base URL (skip port-forward)'
+        required: false
+        default: ''
+      grafana_api_token:
+        description: 'Grafana API token (if snapshots desired)'
+        required: false
+        default: ''
+      grafana_specs:
+        description: 'Dashboard specs string (UID[:panelIds]; separated by ;)'
+        required: false
+        default: ''
+      sendgrid_api_key:
+        description: 'SendGrid API key (optional for email)'
+        required: false
+        default: ''
+      sendgrid_from:
+        description: 'From email for SendGrid (optional)'
+        required: false
+        default: ''
 
 jobs:
   run-ansible-jmeter:
@@ -29,6 +49,16 @@ jobs:
         run: |
           echo "start_ms=$(date +%s%3N)" >> $GITHUB_OUTPUT
           echo "Captured test start time: $(grep start_ms $GITHUB_OUTPUT | cut -d= -f2)"
+
+      - name: Generate deterministic run id
+        id: run_id
+        run: |
+          set -euo pipefail
+          # Pattern: YYYYMMDDThhmmss_RUNNUMBER_SHAShort
+          GEN_ID="$(date -u +%Y%m%dT%H%M%S)_${GITHUB_RUN_NUMBER}_${GITHUB_SHA::7}"
+          echo "Generated RUN_ID=$GEN_ID"
+          echo "RUN_ID=$GEN_ID" >> $GITHUB_ENV
+          echo "run_id=$GEN_ID" >> $GITHUB_OUTPUT
 
       - name: Debug workspace & list tests
         run: |
@@ -115,6 +145,10 @@ jobs:
           echo "Latest run dir: $LATEST"
           echo "latest_dir=$LATEST" >> $GITHUB_OUTPUT
           ls -1 "$LATEST" || true
+          # Drop a marker file with deterministic RUN_ID if available
+          if [ -n "${{ steps.run_id.outputs.run_id }}" ] && [ -d "$LATEST" ]; then
+            echo "${{ steps.run_id.outputs.run_id }}" > "$LATEST/run.id" || true
+          fi
 
       - name: SLA & summary
         id: sla
@@ -197,14 +231,166 @@ jobs:
           echo "end_ms=$(date +%s%3N)" >> $GITHUB_OUTPUT
           echo "Captured test end time: $(grep end_ms $GITHUB_OUTPUT | cut -d= -f2)"
 
+      - name: Aggregate & persist run metrics (Prometheus + JMeter -> Postgres)
+        id: aggregate
+        if: ${{ always() }}
+        env:
+          GIT_COMMIT: ${{ github.sha }}
+          GIT_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          RUN_DIR='${{ steps.locate.outputs.latest_dir }}'
+          if [ -z "$RUN_DIR" ] || [ ! -d "$RUN_DIR" ]; then
+            echo "No run directory discovered -> skip aggregation" >&2
+            exit 0
+          fi
+          START_MS='${{ steps.mark_start.outputs.start_ms }}'
+            END_MS='${{ steps.mark_end.outputs.end_ms }}'
+          if [ -z "$START_MS" ]; then echo "Missing START_MS -> skip"; exit 0; fi
+          if [ -z "$END_MS" ]; then END_MS=$(date +%s%3N); fi
+          START_TS=$(( START_MS / 1000 ))
+          END_TS=$(( END_MS / 1000 ))
+          if [ "$END_TS" -le "$START_TS" ]; then
+            echo "END_TS <= START_TS (adjusting END_TS = START_TS+1)" >&2
+            END_TS=$(( START_TS + 1 ))
+          fi
+          # Prefer deterministic RUN_ID from earlier step / marker file
+          if [ -n "${RUN_ID:-}" ]; then
+            : # already exported via GITHUB_ENV
+          elif [ -f "$RUN_DIR/run.id" ]; then
+            RUN_ID=$(cat "$RUN_DIR/run.id" | tr -d '\n' || true)
+          else
+            RUN_ID=$(basename "$RUN_DIR" || true)
+          fi
+          if [ -z "$RUN_ID" ]; then RUN_ID="run_${{ github.run_id }}"; fi
+          echo "Using RUN_ID=$RUN_ID window=$START_TS..$END_TS";
+
+          # --- Port-forward Prometheus (if PROM_URL not provided) ---
+          if [ -z "${PROM_URL:-}" ]; then
+            PROM_NS=${PROM_NAMESPACE:-monitoring}
+            PROM_SVC=${PROM_SERVICE:-prometheus-server}
+            echo "Port-forwarding Prometheus svc/${PROM_SVC} in ${PROM_NS} to 9090";
+            set +e
+            kubectl port-forward -n "$PROM_NS" svc/"$PROM_SVC" 9090:9090 >/tmp/prom_pf.log 2>&1 &
+            PF_PROM=$!
+            # Wait up to ~15s
+            for i in $(seq 1 30); do
+              if curl -sf http://127.0.0.1:9090/-/ready >/dev/null 2>&1; then break; fi
+              sleep 0.5
+            done
+            if ! curl -sf http://127.0.0.1:9090/-/ready >/dev/null 2>&1; then
+              echo "WARN: Prometheus not reachable on 9090 (continuing, aggregation may fail)" >&2
+            fi
+            set -e
+            export PROM_URL="http://127.0.0.1:9090"
+          else
+            echo "PROM_URL preset: $PROM_URL"
+          fi
+
+          # --- Port-forward Metrics Postgres (if PG_HOST not reachable) ---
+          PG_LOCAL_PORT=${PG_PORT:-15432}
+          : "${PG_HOST:=127.0.0.1}"
+          if ! (echo > /dev/tcp/$PG_HOST/$PG_LOCAL_PORT) >/dev/null 2>&1; then
+            MP_NS=${METRICS_PG_NAMESPACE:-perf-agg}
+            MP_SVC=${METRICS_PG_SERVICE:-metrics-postgres-postgresql}
+            echo "Port-forwarding metrics Postgres svc/${MP_SVC} in ${MP_NS} to ${PG_LOCAL_PORT}";
+            kubectl port-forward -n "$MP_NS" svc/"$MP_SVC" ${PG_LOCAL_PORT}:5432 >/tmp/pg_pf.log 2>&1 &
+            PF_PG=$!
+            for i in $(seq 1 30); do
+              if (echo > /dev/tcp/127.0.0.1/${PG_LOCAL_PORT}) >/dev/null 2>&1; then break; fi
+              sleep 0.5
+            done
+            if ! (echo > /dev/tcp/127.0.0.1/${PG_LOCAL_PORT}) >/dev/null 2>&1; then
+              echo "WARN: metrics Postgres not reachable on ${PG_LOCAL_PORT}" >&2
+            fi
+            export PG_HOST=127.0.0.1
+            export PG_PORT=${PG_LOCAL_PORT}
+          fi
+
+          # --- Prepare Python env ---
+          if ! command -v python3 >/dev/null 2>&1; then
+            echo "Python3 not installed on runner" >&2; exit 0;
+          fi
+          python3 -m venv agg-env || true
+          . agg-env/bin/activate || true
+          python -m pip install --upgrade pip >/dev/null 2>&1 || true
+          pip install --no-cache-dir requests psycopg2-binary >/dev/null
+
+          # JMeter JTL path
+          JTL="$RUN_DIR/results.jtl"
+          if [ ! -f "$JTL" ]; then
+            echo "WARN: JTL file missing ($JTL) – continuing without JMeter metrics" >&2
+            unset JTL
+          fi
+
+          # Validate JTL freshness if present
+          if [ -n "${JTL:-}" ]; then
+            if command -v stat >/dev/null 2>&1; then
+              JTL_MTIME=$(stat -c %Y "$JTL" 2>/dev/null || echo 0)
+              # Accept mtime inside window +/- 10 minutes tolerance
+              LOW_BOUND=$(( START_TS - 600 ))
+              HIGH_BOUND=$(( END_TS + 600 ))
+              if [ "$JTL_MTIME" -lt "$LOW_BOUND" ] || [ "$JTL_MTIME" -gt "$HIGH_BOUND" ]; then
+                echo "WARN: JTL mtime ($JTL_MTIME) outside expected window ${LOW_BOUND}..${HIGH_BOUND}" >&2
+              fi
+            fi
+            # Attempt to parse last timestamp from CSV (millis in first column) if header present
+            LAST_TS_MS=$(tail -n 200 "$JTL" | grep -v '^$' | awk -F',' 'NR==1{h=$0} NR>1 && $1 ~ /^[0-9]+$/ {ts=$1} END{ if(ts!="") print ts }')
+            if [ -n "$LAST_TS_MS" ]; then
+              LAST_TS=$(( LAST_TS_MS / 1000 ))
+              if [ $LAST_TS -lt $(( START_TS - 600 )) ] || [ $LAST_TS -gt $(( END_TS + 600 )) ]; then
+                echo "WARN: Last sample timestamp ($LAST_TS) outside run window ($START_TS..$END_TS)" >&2
+              fi
+            fi
+          fi
+
+          export RUN_ID START_TS END_TS
+          export PG_DB=${PG_DB:-perf_agg}
+          export PG_USER=${PG_USER:-agg_user}
+          export PG_PASSWORD=${PG_PASSWORD:-agg_pass}
+          export JMETER_JTL_PATH="${JTL:-}"
+          export APP_REQUIRE_APPLICATION=${APP_REQUIRE_APPLICATION:-true}
+          # Allow selectors override via secrets/vars if desired
+          : "${APP_JOB_REGEX:=}(app/springboot-app|springboot-app)" || true
+
+          echo "Running aggregation script..."
+          set +e
+          python scripts/aggregate_metrics.py | tee agg_output.log
+          AGG_RC=${PIPESTATUS[0]}
+          set -e
+          if [ $AGG_RC -ne 0 ]; then
+            echo "Aggregation script exited with code $AGG_RC" >&2
+          fi
+
+          # Extract JSON summary
+          awk '/JSON_SUMMARY_START/{f=1;next}/JSON_SUMMARY_END/{f=0}f' agg_output.log > aggregated_metrics.json || true
+          if [ -s aggregated_metrics.json ]; then
+            echo "Aggregated metrics JSON:"; cat aggregated_metrics.json
+          else
+            echo "No aggregated_metrics.json produced" >&2
+          fi
+
+          # Cleanup port-forwards
+          if [ -n "${PF_PROM:-}" ] && ps -p ${PF_PROM} >/dev/null 2>&1; then kill ${PF_PROM} || true; fi
+          if [ -n "${PF_PG:-}" ] && ps -p ${PF_PG}  >/dev/null 2>&1; then kill ${PF_PG}  || true; fi
+
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT || true
+
+      - name: Upload aggregated metrics artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: aggregated-metrics
+          path: |
+            agg_output.log
+            aggregated_metrics.json
+
       - name: (Optional) Grafana port-forward
         id: grafana_pf
         if: ${{ always() }}
-        env:
-          # Allow user to predefine a URL via secret; if set we skip port-forward.
-          GRAFANA_URL_PRESET: ${{ secrets.GRAFANA_URL || '' }}
         run: |
           set -euo pipefail
+          GRAFANA_URL_PRESET='${{ github.event.inputs.grafana_url }}'
           if [ -n "${GRAFANA_URL_PRESET}" ]; then
             echo "Preset GRAFANA_URL provided -> skip port-forward";
             echo "grafana_url=${GRAFANA_URL_PRESET}" >> $GITHUB_OUTPUT
@@ -236,24 +422,18 @@ jobs:
       - name: Grafana snapshots
         id: grafana_snapshots
         if: ${{ always() }}
-        env:
-          # Use port-forward URL if preset secret absent
-          GRAFANA_URL: ${{ secrets.GRAFANA_URL || steps.grafana_pf.outputs.grafana_url }}
-          GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
-          GRAFANA_RENDER_WIDTH: 1500
-          GRAFANA_RENDER_HEIGHT: 850
-          GRAFANA_RENDER_DELAY_SECS: 3
-          # If true -> after individual panel downloads, combine per dashboard into a grid PNG
-          GRAFANA_COMBINE_PANELS: true
-          # Grid layout hint for combination (e.g. 2x2 for 4 panels). Format COLSxROWS; rows auto if omitted.
-          GRAFANA_COMBINE_GRID: 2x2
-          # Format examples (comma separated):
-          #   dashboardUID1:1,2,8;dashboardUID2;dashboardUID3:5
-          # If panel list omitted -> full dashboard render
-          # Can be stored either as secret (preferred if it might contain internal identifiers) or repository variable.
-          GRAFANA_SPECS: ${{ secrets.GRAFANA_SPECS || vars.GRAFANA_SPECS || '' }}
         run: |
           set -euo pipefail
+          GRAFANA_URL_SECRET='${{ github.event.inputs.grafana_url }}'
+          GRAFANA_API_TOKEN='${{ github.event.inputs.grafana_api_token }}'
+          if [ -z "$GRAFANA_URL_SECRET" ]; then
+            GRAFANA_URL='${{ steps.grafana_pf.outputs.grafana_url }}'
+          else
+            GRAFANA_URL="$GRAFANA_URL_SECRET"
+          fi
+          GRAFANA_SPECS_SECRET='${{ github.event.inputs.grafana_specs }}'
+          GRAFANA_SPECS="$GRAFANA_SPECS_SECRET"
+          : "${GRAFANA_RENDER_WIDTH:=1500}"; : "${GRAFANA_RENDER_HEIGHT:=850}"; : "${GRAFANA_RENDER_DELAY_SECS:=3}"; : "${GRAFANA_COMBINE_PANELS:=true}"; : "${GRAFANA_COMBINE_GRID:=2x2}";
           if [ -z "${GRAFANA_URL:-}" ] || [ -z "${GRAFANA_API_TOKEN:-}" ]; then
             echo "Grafana creds not set -> skip"; exit 0; fi
           START='${{ steps.mark_start.outputs.start_ms }}'
@@ -380,11 +560,13 @@ jobs:
 
       - name: Email report (SendGrid API)
         if: ${{ always() && github.event.inputs.email_to != '' }}
-        env:
-          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
-          SENDGRID_FROM: ${{ secrets.SENDGRID_FROM || secrets.SMTP_FROM || 'loadtest-bot@example.com' }}
         run: |
           set -euo pipefail
+          SENDGRID_API_KEY='${{ github.event.inputs.sendgrid_api_key }}'
+          SENDGRID_FROM_SECRET='${{ github.event.inputs.sendgrid_from }}'
+          SMTP_FROM_SECRET='' # not provided via inputs now
+          if [ -n "$SENDGRID_FROM_SECRET" ]; then SENDGRID_FROM="$SENDGRID_FROM_SECRET"; elif [ -n "$SMTP_FROM_SECRET" ]; then SENDGRID_FROM="$SMTP_FROM_SECRET"; else SENDGRID_FROM='loadtest-bot@example.com'; fi
+          export SENDGRID_API_KEY SENDGRID_FROM
           # 1. Guard API key
           if [ -z "${SENDGRID_API_KEY:-}" ]; then
             echo 'SENDGRID_API_KEY empty -> skip email'
@@ -496,6 +678,8 @@ jobs:
             ${{ steps.locate.outputs.latest_dir }}/jmeter.log
             ${{ steps.locate.outputs.latest_dir }}
             grafana_snapshots
+            aggregated_metrics.json
+            agg_output.log
 
       - name: Finish
         run: echo "Done."
