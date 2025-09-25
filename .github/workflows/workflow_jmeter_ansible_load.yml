@@ -12,26 +12,6 @@ on:
         description: 'Emails for report (use comma)'
         required: false
         default: ''
-      grafana_url:
-        description: 'Optional Grafana base URL (skip port-forward)'
-        required: false
-        default: ''
-      grafana_api_token:
-        description: 'Grafana API token (if snapshots desired)'
-        required: false
-        default: ''
-      grafana_specs:
-        description: 'Dashboard specs string (UID[:panelIds]; separated by ;)'
-        required: false
-        default: ''
-      sendgrid_api_key:
-        description: 'SendGrid API key (optional for email)'
-        required: false
-        default: ''
-      sendgrid_from:
-        description: 'From email for SendGrid (optional)'
-        required: false
-        default: ''
 
 jobs:
   run-ansible-jmeter:
@@ -43,6 +23,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Load secret environment
+        run: |
+          # Export secrets (may be empty) into environment for later steps
+          echo "GRAFANA_URL=${{ secrets.GRAFANA_URL }}" >> $GITHUB_ENV
+          echo "GRAFANA_API_TOKEN=${{ secrets.GRAFANA_API_TOKEN }}" >> $GITHUB_ENV
+          echo "GRAFANA_SPECS=${{ secrets.GRAFANA_SPECS }}" >> $GITHUB_ENV
+          echo "SENDGRID_API_KEY=${{ secrets.SENDGRID_API_KEY }}" >> $GITHUB_ENV
+          echo "SENDGRID_FROM=${{ secrets.SENDGRID_FROM }}" >> $GITHUB_ENV
 
       - name: Capture test start time
         id: mark_start
@@ -351,7 +340,7 @@ jobs:
           export JMETER_JTL_PATH="${JTL:-}"
           export APP_REQUIRE_APPLICATION=${APP_REQUIRE_APPLICATION:-true}
           # Allow selectors override via secrets/vars if desired
-          : "${APP_JOB_REGEX:=}(app/springboot-app|springboot-app)" || true
+          : "${APP_JOB_REGEX:='(app/springboot-app|springboot-app)'}"
 
           echo "Running aggregation script..."
           set +e
@@ -390,7 +379,7 @@ jobs:
         if: ${{ always() }}
         run: |
           set -euo pipefail
-          GRAFANA_URL_PRESET='${{ github.event.inputs.grafana_url }}'
+          GRAFANA_URL_PRESET='${GRAFANA_URL:-}'
           if [ -n "${GRAFANA_URL_PRESET}" ]; then
             echo "Preset GRAFANA_URL provided -> skip port-forward";
             echo "grafana_url=${GRAFANA_URL_PRESET}" >> $GITHUB_OUTPUT
@@ -424,15 +413,14 @@ jobs:
         if: ${{ always() }}
         run: |
           set -euo pipefail
-          GRAFANA_URL_SECRET='${{ github.event.inputs.grafana_url }}'
-          GRAFANA_API_TOKEN='${{ github.event.inputs.grafana_api_token }}'
-          if [ -z "$GRAFANA_URL_SECRET" ]; then
+          GRAFANA_URL_PRESET='${GRAFANA_URL:-}'
+          GRAFANA_API_TOKEN='${GRAFANA_API_TOKEN:-}'
+          if [ -z "$GRAFANA_URL_PRESET" ]; then
             GRAFANA_URL='${{ steps.grafana_pf.outputs.grafana_url }}'
           else
-            GRAFANA_URL="$GRAFANA_URL_SECRET"
+            GRAFANA_URL="$GRAFANA_URL_PRESET"
           fi
-          GRAFANA_SPECS_SECRET='${{ github.event.inputs.grafana_specs }}'
-          GRAFANA_SPECS="$GRAFANA_SPECS_SECRET"
+          GRAFANA_SPECS='${GRAFANA_SPECS:-}'
           : "${GRAFANA_RENDER_WIDTH:=1500}"; : "${GRAFANA_RENDER_HEIGHT:=850}"; : "${GRAFANA_RENDER_DELAY_SECS:=3}"; : "${GRAFANA_COMBINE_PANELS:=true}"; : "${GRAFANA_COMBINE_GRID:=2x2}";
           if [ -z "${GRAFANA_URL:-}" ] || [ -z "${GRAFANA_API_TOKEN:-}" ]; then
             echo "Grafana creds not set -> skip"; exit 0; fi
@@ -562,8 +550,8 @@ jobs:
         if: ${{ always() && github.event.inputs.email_to != '' }}
         run: |
           set -euo pipefail
-          SENDGRID_API_KEY='${{ github.event.inputs.sendgrid_api_key }}'
-          SENDGRID_FROM_SECRET='${{ github.event.inputs.sendgrid_from }}'
+          SENDGRID_API_KEY='${SENDGRID_API_KEY:-}'
+          SENDGRID_FROM_SECRET='${SENDGRID_FROM:-}'
           SMTP_FROM_SECRET='' # not provided via inputs now
           if [ -n "$SENDGRID_FROM_SECRET" ]; then SENDGRID_FROM="$SENDGRID_FROM_SECRET"; elif [ -n "$SMTP_FROM_SECRET" ]; then SENDGRID_FROM="$SMTP_FROM_SECRET"; else SENDGRID_FROM='loadtest-bot@example.com'; fi
           export SENDGRID_API_KEY SENDGRID_FROM
