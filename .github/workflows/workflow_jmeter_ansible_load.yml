@@ -658,17 +658,47 @@ jobs:
 
           rm -f resp.txt payload.json || true
 
-      - name: Upload artifacts
+      - name: Assemble artifacts bundle
+        if: ${{ always() }}
+        id: assemble
+        run: |
+          set -euo pipefail
+          BUNDLE_BASE="artifacts_bundle"
+          # Use RUN_ID if available to create unique folder (fallback to run number)
+          RID="${RUN_ID:-${GITHUB_RUN_NUMBER}}"
+            BUNDLE_DIR="${BUNDLE_BASE}/${RID}"
+          mkdir -p "$BUNDLE_DIR"
+          echo "Assembling artifacts into $BUNDLE_DIR"
+          # Copy aggregated metrics files if present
+          for f in aggregated_metrics.json agg_output.log; do
+            [ -f "$f" ] && cp "$f" "$BUNDLE_DIR/" || true
+          done
+          # Copy Grafana snapshots directory
+          if [ -d grafana_snapshots ]; then
+            cp -R grafana_snapshots "$BUNDLE_DIR/" || true
+          fi
+          # Copy run directory content (flatten under run/ to avoid name collisions)
+          RUN_DIR='${{ steps.locate.outputs.latest_dir }}'
+          if [ -n "$RUN_DIR" ] && [ -d "$RUN_DIR" ]; then
+            mkdir -p "$BUNDLE_DIR/run"
+            cp -R "$RUN_DIR"/* "$BUNDLE_DIR/run/" 2>/dev/null || true
+          else
+            echo "Run directory missing ($RUN_DIR)"
+          fi
+          # Optional: include a manifest file summarizing contents
+          {
+            echo "run_id=${RID}"
+            echo "generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "github_run=${GITHUB_RUN_ID}"; echo "commit=${GITHUB_SHA}"; echo "branch=${GITHUB_REF_NAME}";
+          } > "$BUNDLE_DIR/manifest.txt"
+          echo "bundle_dir=$BUNDLE_DIR" >> $GITHUB_OUTPUT
+          echo "Bundle contents:"; find "$BUNDLE_DIR" -maxdepth 2 -type f -printf '%P\n' || true
+
+      - name: Upload artifacts bundle
         uses: actions/upload-artifact@v4
         with:
-          name: jmeter-ansible-run
-          path: |
-            ${{ steps.locate.outputs.latest_dir }}/results.jtl
-            ${{ steps.locate.outputs.latest_dir }}/jmeter.log
-            ${{ steps.locate.outputs.latest_dir }}
-            grafana_snapshots
-            aggregated_metrics.json
-            agg_output.log
+          name: loadtest-${{ steps.run_id.outputs.run_id || github.run_number }}
+          path: ${{ steps.assemble.outputs.bundle_dir }}
 
       - name: Finish
         run: echo "Done."
