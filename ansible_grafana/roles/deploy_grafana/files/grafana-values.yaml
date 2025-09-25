@@ -67,6 +67,137 @@ dashboardProviders:
 
 dashboards:
   performance:
+    aggregated-runs:
+      json: |
+        {
+          "uid": "agg-runs",
+          "title": "Load Test Aggregated Runs",
+          "tags": ["loadtest","aggregated","postgres"],
+          "timezone": "browser",
+          "schemaVersion": 38,
+          "version": 1,
+          "time": {"from": "now-7d", "to": "now"},
+          "refresh": "30s",
+          "templating": {
+            "list": [
+              {
+                "name": "run_id",
+                "type": "query",
+                "datasource": "PerfAgg",
+                "refresh": 2,
+                "hide": 0,
+                "sort": 2,
+                "query": "SELECT run_id AS __text, run_id AS __value FROM test_run ORDER BY started_at DESC LIMIT 50",
+                "current": {},
+                "multi": false,
+                "includeAll": false
+              }
+            ]
+          },
+          "panels": [
+            {"type":"row","title":"Selected Run KPIs","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":0},"id":1},
+            {
+              "type": "stat","title": "Latency p95 (ms)","id": 10,
+              "datasource": "PerfAgg","gridPos": {"h":4,"w":4,"x":0,"y":1},
+              "targets": [{"refId":"A","format":"table","rawSql": "SELECT value FROM metric_point WHERE run_id = '$run_id' AND metric_name='latency_p95_ms'","timeColumn":"","metricColumn":"","valueColumn":"value"}],
+              "fieldConfig": {"defaults": {"unit": "ms","decimals":2},"overrides": []}
+            },
+            {
+              "type": "stat","title": "RPS Avg","id": 11,
+              "datasource": "PerfAgg","gridPos": {"h":4,"w":4,"x":4,"y":1},
+              "targets": [{"refId":"A","rawSql": "SELECT value FROM metric_point WHERE run_id = '$run_id' AND metric_name='rps_avg'","format":"table"}],
+              "fieldConfig": {"defaults": {"unit": "ops","decimals":2},"overrides": []}
+            },
+            {
+              "type": "stat","title": "Error %","id": 12,
+              "datasource": "PerfAgg","gridPos": {"h":4,"w":4,"x":8,"y":1},
+              "targets": [{"refId":"A","rawSql": "SELECT value FROM metric_point WHERE run_id = '$run_id' AND metric_name='error_rate_percent'","format":"table"}],
+              "fieldConfig": {"defaults": {"unit": "percent","decimals":2,"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"yellow","value":1},{"color":"red","value":3}]}},"overrides": []}
+            },
+            {
+              "type": "stat","title": "DB TPS Avg","id": 13,
+              "datasource": "PerfAgg","gridPos": {"h":4,"w":4,"x":12,"y":1},
+              "targets": [{"refId":"A","rawSql": "SELECT value FROM metric_point WHERE run_id = '$run_id' AND metric_name='db_tps_avg'","format":"table"}],
+              "fieldConfig": {"defaults": {"unit": "ops","decimals":2},"overrides": []}
+            },
+            {
+              "type": "stat","title": "CPU Avg (cores)","id": 14,
+              "datasource": "PerfAgg","gridPos": {"h":4,"w":4,"x":16,"y":1},
+              "targets": [{"refId":"A","rawSql": "SELECT value FROM metric_point WHERE run_id = '$run_id' AND metric_name='cpu_avg_cores'","format":"table"}],
+              "fieldConfig": {"defaults": {"unit": "cores","decimals":3},"overrides": []}
+            },
+            {
+              "type": "stat","title": "Heap Used Max (MB)","id": 15,
+              "datasource": "PerfAgg","gridPos": {"h":4,"w":4,"x":20,"y":1},
+              "targets": [{"refId":"A","rawSql": "SELECT value/1024/1024 AS value FROM metric_point WHERE run_id = '$run_id' AND metric_name='jvm_heap_used_max_bytes'","format":"table"}],
+              "fieldConfig": {"defaults": {"unit": "megabytes","decimals":1},"overrides": []}
+            },
+            {"type":"row","title":"JMeter Response Times","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":5},"id":20},
+            {
+              "type":"stat","title":"Resp Avg (ms)","id":21,"datasource":"PerfAgg","gridPos":{"h":4,"w":4,"x":0,"y":6},
+              "targets":[{"refId":"A","rawSql":"SELECT value FROM metric_point WHERE run_id='$run_id' AND metric_name='jmeter_resp_time_avg_ms'","format":"table"}],
+              "fieldConfig":{"defaults":{"unit":"ms","decimals":2},"overrides":[]}
+            },
+            {
+              "type":"stat","title":"Resp p90 (ms)","id":22,"datasource":"PerfAgg","gridPos":{"h":4,"w":4,"x":4,"y":6},
+              "targets":[{"refId":"A","rawSql":"SELECT value FROM metric_point WHERE run_id='$run_id' AND metric_name='jmeter_resp_time_p90_ms'","format":"table"}],
+              "fieldConfig":{"defaults":{"unit":"ms","decimals":2},"overrides":[]}
+            },
+            {
+              "type":"stat","title":"Resp Max (ms)","id":23,"datasource":"PerfAgg","gridPos":{"h":4,"w":4,"x":8,"y":6},
+              "targets":[{"refId":"A","rawSql":"SELECT value FROM metric_point WHERE run_id='$run_id' AND metric_name='jmeter_resp_time_max_ms'","format":"table"}],
+              "fieldConfig":{"defaults":{"unit":"ms","decimals":0},"overrides":[]}
+            },
+            {
+              "type":"stat","title":"Samples","id":24,"datasource":"PerfAgg","gridPos":{"h":4,"w":4,"x":12,"y":6},
+              "targets":[{"refId":"A","rawSql":"SELECT value FROM metric_point WHERE run_id='$run_id' AND metric_name='jmeter_samples_count'","format":"table"}],
+              "fieldConfig":{"defaults":{"unit":"short","decimals":0},"overrides":[]}
+            },
+            {
+              "type":"stat","title":"Traffic Present","id":25,"datasource":"PerfAgg","gridPos":{"h":4,"w":4,"x":16,"y":6},
+              "targets":[{"refId":"A","rawSql":"SELECT value FROM metric_point WHERE run_id='$run_id' AND metric_name='traffic_present'","format":"table"}],
+              "fieldConfig":{"defaults":{"mappings":[{"type":"value","options":{"0":{"text":"No"},"1":{"text":"Yes"}}}],"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"green","value":1}]},"decimals":0},"overrides":[]}
+            },
+            {"type":"row","title":"All Metrics Table","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":10},"id":30},
+            {
+              "type":"table","title":"Metric Points","id":31,"datasource":"PerfAgg","gridPos":{"h":10,"w":24,"x":0,"y":11},
+              "targets":[{"refId":"A","rawSql":"SELECT metric_name, value, unit FROM metric_point WHERE run_id = '$run_id' ORDER BY metric_name","format":"table"}],
+              "options":{"showHeader":true},
+              "fieldConfig":{"defaults":{"custom":{}},"overrides":[]}
+            },
+            {"type":"row","title":"History (Last 20 Runs)","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":21},"id":40},
+            {
+              "type":"timeseries","title":"Latency p95 (ms) - Last 20","id":41,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":0,"y":22},
+              "targets":[{"refId":"A","rawSql":"SELECT extract(epoch from tr.started_at)*1000 AS time, mp.value AS value, mp.run_id AS metric FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='latency_p95_ms' ORDER BY tr.started_at DESC LIMIT 20","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
+              "fieldConfig":{"defaults":{"unit":"ms","decimals":2},"overrides":[]}
+            },
+            {
+              "type":"timeseries","title":"RPS Avg - Last 20","id":42,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":8,"y":22},
+              "targets":[{"refId":"A","rawSql":"SELECT extract(epoch from tr.started_at)*1000 AS time, mp.value AS value, mp.run_id AS metric FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='rps_avg' ORDER BY tr.started_at DESC LIMIT 20","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
+              "fieldConfig":{"defaults":{"unit":"ops","decimals":2},"overrides":[]}
+            },
+            {
+              "type":"timeseries","title":"Error % - Last 20","id":43,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":16,"y":22},
+              "targets":[{"refId":"A","rawSql":"SELECT extract(epoch from tr.started_at)*1000 AS time, mp.value AS value, mp.run_id AS metric FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='error_rate_percent' ORDER BY tr.started_at DESC LIMIT 20","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
+              "fieldConfig":{"defaults":{"unit":"percent","decimals":2},"overrides":[]}
+            },
+            {
+              "type":"timeseries","title":"DB TPS Avg - Last 20","id":44,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":0,"y":28},
+              "targets":[{"refId":"A","rawSql":"SELECT extract(epoch from tr.started_at)*1000 AS time, mp.value AS value, mp.run_id AS metric FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='db_tps_avg' ORDER BY tr.started_at DESC LIMIT 20","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
+              "fieldConfig":{"defaults":{"unit":"ops","decimals":2},"overrides":[]}
+            },
+            {
+              "type":"timeseries","title":"CPU Avg (cores) - Last 20","id":45,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":8,"y":28},
+              "targets":[{"refId":"A","rawSql":"SELECT extract(epoch from tr.started_at)*1000 AS time, mp.value AS value, mp.run_id AS metric FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='cpu_avg_cores' ORDER BY tr.started_at DESC LIMIT 20","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
+              "fieldConfig":{"defaults":{"unit":"cores","decimals":3},"overrides":[]}
+            },
+            {
+              "type":"timeseries","title":"Heap Used Max (MB) - Last 20","id":46,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":16,"y":28},
+              "targets":[{"refId":"A","rawSql":"SELECT extract(epoch from tr.started_at)*1000 AS time, (mp.value/1024/1024) AS value, mp.run_id AS metric FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='jvm_heap_used_max_bytes' ORDER BY tr.started_at DESC LIMIT 20","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
+              "fieldConfig":{"defaults":{"unit":"megabytes","decimals":1},"overrides":[]}
+            }
+          ]
+        }
     k8s:
       json: |
         {
@@ -595,3 +726,18 @@ datasources:
         url: http://prometheus-server.monitoring.svc.cluster.local:80
         access: proxy
         isDefault: true
+      - name: PerfAgg
+        type: postgres
+        url: metrics-postgres-postgresql.perf-agg.svc.cluster.local:5432
+        access: proxy
+        user: agg_user
+        database: perf_agg
+        jsonData:
+          sslmode: disable
+          postgresVersion: 1400
+          timescaledb: false
+          timeInterval: 1m
+        secureJsonData:
+          password: agg_pass
+        editable: true
+        isDefault: false
