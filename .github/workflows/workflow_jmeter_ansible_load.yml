@@ -542,9 +542,10 @@ jobs:
         if: ${{ always() && github.event.inputs.email_to != '' }}
         run: |
           set -euo pipefail
-          SENDGRID_API_KEY='${SENDGRID_API_KEY:-}'
-          SENDGRID_FROM_SECRET='${SENDGRID_FROM:-}'
-          SMTP_FROM_SECRET='' # not provided via inputs now
+          SENDGRID_API_KEY="${SENDGRID_API_KEY:-}"
+          SENDGRID_FROM_SECRET="${SENDGRID_FROM:-}"
+          SMTP_FROM_SECRET="" # not provided via inputs now
+          if [ -n "$SENDGRID_API_KEY" ]; then echo "[debug] SendGrid key length: ${#SENDGRID_API_KEY}"; else echo "[debug] SENDGRID_API_KEY empty"; fi
           if [ -n "$SENDGRID_FROM_SECRET" ]; then SENDGRID_FROM="$SENDGRID_FROM_SECRET"; elif [ -n "$SMTP_FROM_SECRET" ]; then SENDGRID_FROM="$SMTP_FROM_SECRET"; else SENDGRID_FROM='loadtest-bot@example.com'; fi
           export SENDGRID_API_KEY SENDGRID_FROM
           # 1. Guard API key
