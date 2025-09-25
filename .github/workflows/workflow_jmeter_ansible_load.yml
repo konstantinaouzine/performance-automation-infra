@@ -413,14 +413,15 @@ jobs:
         if: ${{ always() }}
         run: |
           set -euo pipefail
-          GRAFANA_URL_PRESET='${GRAFANA_URL:-}'
-          GRAFANA_API_TOKEN='${GRAFANA_API_TOKEN:-}'
+          GRAFANA_URL_PRESET="${GRAFANA_URL:-}"
+          GRAFANA_API_TOKEN="${GRAFANA_API_TOKEN:-}"
           if [ -z "$GRAFANA_URL_PRESET" ]; then
             GRAFANA_URL='${{ steps.grafana_pf.outputs.grafana_url }}'
           else
             GRAFANA_URL="$GRAFANA_URL_PRESET"
           fi
-          GRAFANA_SPECS='${GRAFANA_SPECS:-}'
+          GRAFANA_SPECS="${GRAFANA_SPECS:-}"
+          echo "(debug) Raw GRAFANA_SPECS=$GRAFANA_SPECS"
           : "${GRAFANA_RENDER_WIDTH:=1500}"; : "${GRAFANA_RENDER_HEIGHT:=850}"; : "${GRAFANA_RENDER_DELAY_SECS:=3}"; : "${GRAFANA_COMBINE_PANELS:=true}"; : "${GRAFANA_COMBINE_GRID:=2x2}";
           if [ -z "${GRAFANA_URL:-}" ] || [ -z "${GRAFANA_API_TOKEN:-}" ]; then
             echo "Grafana creds not set -> skip"; exit 0; fi
