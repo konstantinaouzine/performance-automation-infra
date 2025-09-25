@@ -1,0 +1,94 @@
+---
+- name: Wait for Metrics PostgreSQL service (simple delay; replace with proper check if needed)
+  ansible.builtin.wait_for:
+    host: localhost
+    port: "{{ metrics_postgres_forward_port }}"
+    timeout: 30
+    delay: 1
+
+- name: Fetch admin password secret raw (base64)
+  ansible.builtin.command: >-
+    kubectl get secret {{ metrics_postgres_release_name }}-postgresql -n {{ metrics_postgres_namespace }} -o jsonpath={.data.postgres-password}
+  register: metrics_pwd_raw
+  changed_when: false
+
+- name: Decode admin password
+  set_fact:
+    metrics_postgres_admin_password: "{{ metrics_pwd_raw.stdout | b64decode }}"
+
+- name: Ensure agg_user role exists (idempotent)
+  community.postgresql.postgresql_user:
+    name: agg_user
+    password: agg_pass
+    db: perf_agg
+    priv: ALL
+    login_host: localhost
+    port: "{{ metrics_postgres_forward_port }}"
+    login_user: postgres
+    login_password: "{{ metrics_postgres_admin_password }}"
+    state: present
+
+- name: Create schema objects for aggregated metrics
+  community.postgresql.postgresql_query:
+    db: perf_agg
+    login_host: localhost
+    port: "{{ metrics_postgres_forward_port }}"
+    login_user: agg_user
+    login_password: agg_pass
+    query: |
+      CREATE TABLE IF NOT EXISTS test_run (
+        run_id TEXT PRIMARY KEY,
+        started_at TIMESTAMPTZ NOT NULL,
+        finished_at TIMESTAMPTZ NOT NULL,
+        duration_seconds INT NOT NULL,
+        git_commit TEXT NULL,
+        branch TEXT NULL,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS metric_point (
+        id BIGSERIAL PRIMARY KEY,
+        run_id TEXT REFERENCES test_run(run_id) ON DELETE CASCADE,
+        metric_name TEXT NOT NULL,
+        value DOUBLE PRECISION NOT NULL,
+        unit TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE(run_id, metric_name)
+      );
+
+- name: Grant privileges on public schema (safety)
+  community.postgresql.postgresql_privs:
+    database: perf_agg
+    roles: agg_user
+    type: schema
+    objs: public
+    privs: USAGE,CREATE
+    login_host: localhost
+    port: "{{ metrics_postgres_forward_port }}"
+    login_user: postgres
+    login_password: "{{ metrics_postgres_admin_password }}"
+
+- name: Grant privileges on tables
+  community.postgresql.postgresql_privs:
+    database: perf_agg
+    roles: agg_user
+    type: table
+    objs: ALL_IN_SCHEMA
+    schema: public
+    privs: ALL
+    login_host: localhost
+    port: "{{ metrics_postgres_forward_port }}"
+    login_user: postgres
+    login_password: "{{ metrics_postgres_admin_password }}"
+
+- name: Grant privileges on sequences
+  community.postgresql.postgresql_privs:
+    database: perf_agg
+    roles: agg_user
+    type: sequence
+    objs: ALL_IN_SCHEMA
+    schema: public
+    privs: ALL
+    login_host: localhost
+    port: "{{ metrics_postgres_forward_port }}"
+    login_user: postgres
+    login_password: "{{ metrics_postgres_admin_password }}"

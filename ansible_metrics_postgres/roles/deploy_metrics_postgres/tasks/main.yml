@@ -1,0 +1,9 @@
+---
+- name: Deploy Metrics PostgreSQL with Bitnami Helm chart
+  kubernetes.core.helm:
+    name: "{{ metrics_postgres_release_name }}"
+    chart_ref: "{{ metrics_postgres_chart_name }}"
+    namespace: "{{ metrics_postgres_namespace }}"
+    create_namespace: true
+    values: "{{ metrics_postgres_values }}"
+    state: present

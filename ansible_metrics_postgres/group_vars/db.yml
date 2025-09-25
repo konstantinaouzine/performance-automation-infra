@@ -1,0 +1,13 @@
+metrics_postgres_chart_name: bitnami/postgresql
+metrics_postgres_release_name: metrics-postgres
+metrics_postgres_namespace: perf-agg
+metrics_postgres_values:
+  auth:
+    username: agg_user
+    password: agg_pass
+    database: perf_agg
+  primary:
+    persistence:
+      size: 5Gi
+metrics_postgres_forward_port: 15432
+metrics_postgres_service_name: "{{ metrics_postgres_release_name }}-postgresql"

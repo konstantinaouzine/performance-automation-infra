@@ -1,0 +1,54 @@
+---
+- name: Deploy Metrics Aggregation PostgreSQL
+  hosts: db
+  gather_facts: false
+  tasks:
+    - name: Deploy metrics postgres (Helm chart)
+      import_role:
+        name: deploy_metrics_postgres
+
+    - name: Wait for statefulset pods to become ready (rollout status)
+      ansible.builtin.command: >-
+        kubectl rollout status statefulset/{{ metrics_postgres_service_name }} -n {{ metrics_postgres_namespace }} --timeout=180s
+      register: rollout_status
+      changed_when: false
+      failed_when: rollout_status.rc != 0
+
+    - name: Confirm metrics postgres service exists
+      ansible.builtin.command: >-
+        kubectl get svc {{ metrics_postgres_service_name }} -n {{ metrics_postgres_namespace }}
+      register: svc_check
+      retries: 6
+      delay: 5
+      until: svc_check.rc == 0
+      changed_when: false
+
+    - name: Check if metrics postgres port already listening locally
+      ansible.builtin.shell: |
+        if nc -z localhost {{ metrics_postgres_forward_port }}; then echo LISTEN; else echo NO; fi
+      register: pf_port_state
+      changed_when: false
+
+    - name: Start port-forward for metrics postgres service (background)
+      ansible.builtin.shell: |
+        nohup kubectl port-forward -n {{ metrics_postgres_namespace }} svc/{{ metrics_postgres_service_name }} {{ metrics_postgres_forward_port }}:5432 > /tmp/metrics_pf.log 2>&1 & echo $! > /tmp/metrics_pf.pid
+      async: 0
+      poll: 0
+      when: pf_port_state.stdout == 'NO'
+
+    - name: Wait for forwarded port to be ready
+      ansible.builtin.wait_for:
+        host: localhost
+        port: "{{ metrics_postgres_forward_port }}"
+        timeout: 60
+        delay: 3
+
+    - name: Debug port-forward log on failure (if port still not listening)
+      ansible.builtin.shell: |
+        if ! nc -z localhost {{ metrics_postgres_forward_port }}; then echo '--- port-forward log ---'; tail -n 50 /tmp/metrics_pf.log || true; exit 1; fi
+      register: pf_health
+      changed_when: false
+
+    - name: Initialize metrics postgres schema and roles
+      import_role:
+        name: init_metrics_postgres
