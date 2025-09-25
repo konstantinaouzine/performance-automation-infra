@@ -365,15 +365,6 @@ jobs:
 
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT || true
 
-      - name: Upload aggregated metrics artifact
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: aggregated-metrics
-          path: |
-            agg_output.log
-            aggregated_metrics.json
-
       - name: (Optional) Grafana port-forward
         id: grafana_pf
         if: ${{ always() }}
