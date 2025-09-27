@@ -1,5 +1,5 @@
 name: Load Test - JMeter Ansible
-run-name: "JMeter: ${{ github.event.inputs.test_file || 'test_app_load_only.jmx' }}"
+run-name: "JMeter: ${{ github.event.inputs.test_file || 'test_db_load_only.jmx' }}"
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
       test_file:
         description: 'JMX file name (with no path, can be without extension)'
         required: true
-        default: 'test_app_load_only.jmx'
+        default: 'test_db_load_only.jmx'
       email_to:
         description: 'Emails for report (use comma)'
         required: false
@@ -308,7 +308,7 @@ jobs:
           # JMeter JTL path
           JTL="$RUN_DIR/results.jtl"
           if [ ! -f "$JTL" ]; then
-            echo "WARN: JTL file missing ($JTL) – continuing without JMeter metrics" >&2
+            echo "WARN: JTL file missing ($JTL) - continuing without JMeter metrics" >&2
             unset JTL
           fi
 
