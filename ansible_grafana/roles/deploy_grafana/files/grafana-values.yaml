@@ -95,14 +95,14 @@ dashboards:
             ]
           },
           "panels": [
-            {"type":"row","title":"Run Comparison KPIs","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":0},"id":1},
+            {"type":"row","title":"Aggregated Test KPIs table","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":0},"id":1},
             {
               "type":"table","title":"Aggregated KPIs per Run","id":2,"datasource":"PerfAgg","gridPos":{"h":10,"w":24,"x":0,"y":1},
               "targets":[{"refId":"A","rawSql":"SELECT\n  run_id,\n  MAX(CASE WHEN metric_name='latency_p95_ms' THEN value END) AS latency_p95_ms,\n  MAX(CASE WHEN metric_name='rps_avg' THEN value END) AS rps_avg,\n  MAX(CASE WHEN metric_name='error_rate_percent' THEN value END) AS error_rate_percent,\n  MAX(CASE WHEN metric_name='db_tps_avg' THEN value END) AS db_tps_avg,\n  MAX(CASE WHEN metric_name='cpu_avg_cores' THEN value END) AS cpu_avg_cores,\n  MAX(CASE WHEN metric_name='jvm_heap_used_max_bytes' THEN value/1024/1024 END) AS heap_used_max_mb,\n  MAX(CASE WHEN metric_name='jmeter_resp_time_avg_ms' THEN value END) AS jmeter_resp_time_avg_ms,\n  MAX(CASE WHEN metric_name='jmeter_resp_time_p90_ms' THEN value END) AS jmeter_resp_time_p90_ms,\n  MAX(CASE WHEN metric_name='jmeter_resp_time_max_ms' THEN value END) AS jmeter_resp_time_max_ms,\n  MAX(CASE WHEN metric_name='jmeter_samples_count' THEN value END) AS jmeter_samples_count,\n  MAX(CASE WHEN metric_name='traffic_present' THEN value END) AS traffic_present\nFROM metric_point\nWHERE run_id IN ($run_id)\nGROUP BY run_id\nORDER BY run_id DESC","format":"table"}],
               "options":{"showHeader":true},
               "fieldConfig":{"defaults":{"custom":{}},"overrides":[]}
             },
-            {"type":"row","title":"History (Last 20 Runs)","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":11},"id":40},
+            {"type":"row","title":"Aggregated Test KPIs graphs","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":11},"id":40},
             {
               "type":"timeseries","title":"Latency p95 (ms) - Last 20","id":41,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":0,"y":12},
               "targets":[{"refId":"A","rawSql":"SELECT * FROM (SELECT extract(epoch from tr.started_at)*1000 AS time, mp.run_id AS metric, mp.value AS value FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='latency_p95_ms' AND mp.run_id IN ($run_id) ORDER BY tr.started_at DESC LIMIT 20) q ORDER BY time ASC","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
