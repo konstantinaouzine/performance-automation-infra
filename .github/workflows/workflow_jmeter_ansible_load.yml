@@ -8,12 +8,12 @@ on:
         description: 'JMX file name (with no path, can be without extension)'
         required: true
         default: 'test_db_load_only.jmx'
-      email_to:
-        description: 'Emails for report (use comma)'
-        required: false
-        default: ''
       jmeter_overrides:
         description: 'Override JMeter vars (comma or space separated key=value, e.g. threads=50 duration=120 ramp=10)'
+        required: false
+        default: ''
+      email_to:
+        description: 'Emails for report (use comma)'
         required: false
         default: ''
 
