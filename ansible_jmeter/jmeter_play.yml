@@ -24,8 +24,8 @@
     jmeter_linger_seconds: 90
     jmeter_threads: 10
     jmeter_ramp: 5
-  # Default duration (seconds) if not overridden via extra var (jmeter_duration_seconds)
-  jmeter_duration_seconds: 60
+    # Default duration (seconds) if not overridden via extra var (jmeter_duration_seconds)
+    jmeter_duration_seconds: 60
     jmeter_cpu_request: 100m
     jmeter_mem_request: 256Mi
     jmeter_cpu_limit: 500m
