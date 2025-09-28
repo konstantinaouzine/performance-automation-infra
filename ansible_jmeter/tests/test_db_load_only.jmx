@@ -18,22 +18,22 @@
           </elementProp>
           <elementProp name="loadEndpointThreads" elementType="Argument">
             <stringProp name="Argument.name">loadEndpointThreads</stringProp>
-            <stringProp name="Argument.value">${__P(loadEndpointThreads), 10}</stringProp>
+            <stringProp name="Argument.value">${__P(loadEndpointThreads, 10)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="dbEndpointThreads" elementType="Argument">
             <stringProp name="Argument.name">dbEndpointThreads</stringProp>
-            <stringProp name="Argument.value">${__P(dbEndpointThreads), 10}</stringProp>
+            <stringProp name="Argument.value">${__P(dbEndpointThreads, 10)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="testDurationInSec" elementType="Argument">
             <stringProp name="Argument.name">testDurationInSec</stringProp>
-            <stringProp name="Argument.value">${__P(testDurationInSec), 120}</stringProp>
+            <stringProp name="Argument.value">${__P(testDurationInSec, 120)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="threadsRampupInSec" elementType="Argument">
             <stringProp name="Argument.name">threadsRampupInSec</stringProp>
-            <stringProp name="Argument.value">${__P(threadsRampupInSec), 10}</stringProp>
+            <stringProp name="Argument.value">${__P(threadsRampupInSec, 10)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
         </collectionProp>
@@ -140,7 +140,7 @@
         </ResultCollector>
         <hashTree/>
       </hashTree>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Thread Group - test_table">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Thread Group - test_table" enabled="true">
         <stringProp name="ThreadGroup.num_threads">${dbEndpointThreads}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">${threadsRampupInSec}</stringProp>
         <stringProp name="ThreadGroup.duration">${testDurationInSec}</stringProp>

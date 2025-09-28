@@ -39,10 +39,6 @@ spec:
             periodSeconds: 5
             failureThreshold: 1
           env:
-            - name: THREADS
-              value: "{{ jmeter_threads }}"
-            - name: RAMP
-              value: "{{ jmeter_ramp }}"
             - name: RUN_ID
               value: "{{ jmeter_run_id }}"
             - name: APP_HOST
@@ -60,8 +56,6 @@ spec:
                 -Jprometheus.port={{ jmeter_metrics_port }} \
                 -Jprometheus.delay=5 \
                 -Jprometheus.ip=0.0.0.0 \
-                -Jthreads=${THREADS} \
-                -Jramp=${RAMP} \
                 -Jrun_id=${RUN_ID} \
                 -Japp_host=${APP_HOST} \
 {% if jmeter_extra_jprops is defined and jmeter_extra_jprops|length > 0 %}                {{ jmeter_extra_jprops }} \

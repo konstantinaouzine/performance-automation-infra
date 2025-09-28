@@ -105,17 +105,8 @@ jobs:
               v_trim=$(echo "$v" | tr -d ' ')
               [ -z "$k_trim" ] && continue
               if [ -n "$v_trim" ]; then
-                case "$k_trim" in
-                  threads) EXTRA_VARS+=" -e jmeter_threads=$v_trim" ;;  # handled by existing -Jthreads
-                  ramp|rampup) EXTRA_VARS+=" -e jmeter_ramp=$v_trim" ;; # handled by existing -Jramp
-                  duration|time|seconds) EXTRA_VARS+=" -e jmeter_duration_seconds=$v_trim" ;; # optional internal use
-                  *) EXTRA_VARS+=" -e $k_trim=$v_trim" ;;
-                esac
-                # Add generic -J unless it's one we already output explicitly
-                case "$k_trim" in
-                  threads|ramp|rampup) : ;; # skip duplicate -J
-                  *) JPROPS+=" -J${k_trim}=${v_trim}" ;;
-                esac
+                # Always treat every key=value as a JMeter -J property; rely on JMX for defaults.
+                JPROPS+=" -J${k_trim}=${v_trim}"
               fi
             done < <(echo "$OVERRIDES_RAW" | tr ', ' '\n' | sed '/^$/d')
             if [ -n "$JPROPS" ]; then

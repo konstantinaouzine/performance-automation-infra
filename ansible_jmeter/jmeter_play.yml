@@ -22,10 +22,9 @@
     jmeter_app_host: springboot-app-springboot-app.app.svc.cluster.local
     # How long to keep pod alive after test so Prometheus (30s scrape) can collect metrics at least twice
     jmeter_linger_seconds: 90
-    jmeter_threads: 10
-    jmeter_ramp: 5
-    # Default duration (seconds) if not overridden via extra var (jmeter_duration_seconds)
-    jmeter_duration_seconds: 60
+  # No automatic JMeter load parameter defaults injected here.
+  # All defaults must reside inside the JMX test plan via ${__P(name,default)}.
+  # Any overrides arrive from workflow as jmeter_extra_jprops (generic -Jkey=value list).
     jmeter_cpu_request: 100m
     jmeter_mem_request: 256Mi
     jmeter_cpu_limit: 500m
@@ -38,9 +37,9 @@
       debug:
         msg: "jmeter_repo_root={{ jmeter_repo_root }} playbook_dir={{ playbook_dir }}"
 
-    - name: Show applied JMeter overrides (threads, ramp, duration)
+    - name: Show supplied generic JMeter property overrides (if any)
       debug:
-        msg: "Using threads={{ jmeter_threads }} ramp={{ jmeter_ramp }} duration={{ jmeter_duration_seconds }}s (override via extra vars if supplied)"
+        msg: "JMeter extra JProps: {{ jmeter_extra_jprops | default('none') }} (defaults come from JMX)"
 
     - name: Abort (unsupported) when running in check mode
       meta: end_play
