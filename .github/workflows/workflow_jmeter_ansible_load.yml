@@ -16,6 +16,21 @@ on:
         description: 'Emails for report (use comma)'
         required: false
         default: ''
+      preload_data:
+        description: 'Preload dataset before test (demo only)'
+        type: boolean
+        required: false
+        default: false
+      preload_dataset:
+        description: 'Dataset size to preload (demo)'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - 100k
+          - 500k
+          - 1m
 
 jobs:
   run-ansible-jmeter:
@@ -57,6 +72,13 @@ jobs:
         run: |
           echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
           ls -1 $GITHUB_WORKSPACE/ansible_jmeter/tests || { echo 'tests dir missing'; exit 1; }
+          echo "preload_data=${{ github.event.inputs.preload_data }}"
+          echo "preload_dataset=${{ github.event.inputs.preload_dataset }}"
+          if [ "${{ github.event.inputs.preload_data }}" = "true" ]; then
+            echo "(demo) Would trigger seeding for dataset size='${{ github.event.inputs.preload_dataset }}' (no-op now)"
+          else
+            echo "(demo) Preload disabled"
+          fi
 
       - name: Ensure Ansible
         run: |
