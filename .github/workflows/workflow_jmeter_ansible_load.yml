@@ -106,13 +106,18 @@ jobs:
               [ -z "$k_trim" ] && continue
               if [ -n "$v_trim" ]; then
                 # Always treat every key=value as a JMeter -J property; rely on JMX for defaults.
-                JPROPS+=" -J${k_trim}=${v_trim}"
+                if [ -z "$JPROPS" ]; then
+                  JPROPS="-J${k_trim}=${v_trim}"
+                else
+                  JPROPS+=" -J${k_trim}=${v_trim}"
+                fi
               fi
             done < <(echo "$OVERRIDES_RAW" | tr ', ' '\n' | sed '/^$/d')
             if [ -n "$JPROPS" ]; then
               EXTRA_VARS+=" -e jmeter_extra_jprops=\"$JPROPS\""
             fi
             echo "Derived extra vars: $EXTRA_VARS"
+            echo "Final JMeter -J props: $JPROPS"
           fi
           kubectl delete job -n load -l app=jmeter-loadgen --ignore-not-found || true
           ansible-playbook ansible_jmeter/jmeter_play.yml \

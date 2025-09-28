@@ -52,6 +52,8 @@ spec:
               RUN_DIR="/artifacts/${RUN_ID}"
               mkdir -p "$RUN_DIR"
               echo "Starting JMeter run_id=${RUN_ID} target=${APP_HOST} (artifacts in $RUN_DIR)"
+              echo "JMeter extra props: {{ jmeter_extra_jprops | default('NONE') }}"
+              echo "Launching JMeter..."
               jmeter -n -t /tests/{{ jmeter_test_file_effective }} \
                 -Jprometheus.port={{ jmeter_metrics_port }} \
                 -Jprometheus.delay=5 \
