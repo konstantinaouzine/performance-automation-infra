@@ -12,6 +12,10 @@ on:
         description: 'Emails for report (use comma)'
         required: false
         default: ''
+      jmeter_overrides:
+        description: 'Override JMeter vars (comma or space separated key=value, e.g. threads=50 duration=120 ramp=10)'
+        required: false
+        default: ''
 
 jobs:
   run-ansible-jmeter:
@@ -89,10 +93,40 @@ jobs:
           if [[ "$TEST_FILE" != *.jmx ]]; then TEST_FILE="${TEST_FILE}.jmx"; fi
           mkdir -p "$LOGS_DIR"
           echo "Using LOGS_DIR=$LOGS_DIR"
+          OVERRIDES_RAW='${{ github.event.inputs.jmeter_overrides }}'
+          EXTRA_VARS=""
+          JPROPS=""
+          if [ -n "$OVERRIDES_RAW" ]; then
+            # Normalize separators: spaces and commas -> newline, then key=value only
+            echo "Overrides raw: $OVERRIDES_RAW"
+            while IFS='=' read -r k v; do
+              [ -z "$k" ] && continue
+              k_trim=$(echo "$k" | tr -cd 'a-zA-Z0-9_')
+              v_trim=$(echo "$v" | tr -d ' ')
+              [ -z "$k_trim" ] && continue
+              if [ -n "$v_trim" ]; then
+                case "$k_trim" in
+                  threads) EXTRA_VARS+=" -e jmeter_threads=$v_trim" ;;  # handled by existing -Jthreads
+                  ramp|rampup) EXTRA_VARS+=" -e jmeter_ramp=$v_trim" ;; # handled by existing -Jramp
+                  duration|time|seconds) EXTRA_VARS+=" -e jmeter_duration_seconds=$v_trim" ;; # optional internal use
+                  *) EXTRA_VARS+=" -e $k_trim=$v_trim" ;;
+                esac
+                # Add generic -J unless it's one we already output explicitly
+                case "$k_trim" in
+                  threads|ramp|rampup) : ;; # skip duplicate -J
+                  *) JPROPS+=" -J${k_trim}=${v_trim}" ;;
+                esac
+              fi
+            done < <(echo "$OVERRIDES_RAW" | tr ', ' '\n' | sed '/^$/d')
+            if [ -n "$JPROPS" ]; then
+              EXTRA_VARS+=" -e jmeter_extra_jprops=\"$JPROPS\""
+            fi
+            echo "Derived extra vars: $EXTRA_VARS"
+          fi
           kubectl delete job -n load -l app=jmeter-loadgen --ignore-not-found || true
           ansible-playbook ansible_jmeter/jmeter_play.yml \
             -e jmeter_test_file="$TEST_FILE" \
-            -e jmeter_local_logs_dir="$LOGS_DIR" || { echo 'Playbook failed'; exit 1; }
+            -e jmeter_local_logs_dir="$LOGS_DIR" $EXTRA_VARS || { echo 'Playbook failed'; exit 1; }
           echo 'After playbook directory tree:'
           find "$LOGS_DIR" -maxdepth 2 -type f -name run.meta -printf 'META %p\n' || true
 

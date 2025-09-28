@@ -24,20 +24,28 @@
     jmeter_linger_seconds: 90
     jmeter_threads: 10
     jmeter_ramp: 5
+  # Default duration (seconds) if not overridden via extra var (jmeter_duration_seconds)
+  jmeter_duration_seconds: 60
     jmeter_cpu_request: 100m
     jmeter_mem_request: 256Mi
     jmeter_cpu_limit: 500m
     jmeter_mem_limit: 512Mi
     jmeter_pvc_name: jmeter-artifacts
     jmeter_pvc_storage: 1Gi
+
   pre_tasks:
     - name: Debug repo root resolution
       debug:
         msg: "jmeter_repo_root={{ jmeter_repo_root }} playbook_dir={{ playbook_dir }}"
 
+    - name: Show applied JMeter overrides (threads, ramp, duration)
+      debug:
+        msg: "Using threads={{ jmeter_threads }} ramp={{ jmeter_ramp }} duration={{ jmeter_duration_seconds }}s (override via extra vars if supplied)"
+
     - name: Abort (unsupported) when running in check mode
       meta: end_play
       when: ansible_check_mode
+
     - name: Normalize JMeter test file (ensure single .jmx) and path
       set_fact:
         jmeter_test_file_effective: "{{ (jmeter_test_file | default('test')) | regex_replace('\\.jmx$','') }}.jmx"
@@ -67,15 +75,19 @@
       set_fact:
         jmeter_image_tag: "{{ lookup('pipe','date +%Y%m%d%H%M%S') }}"
       when: jmeter_image_tag is not defined or jmeter_image_tag|length == 0 or jmeter_image_tag == 'latest'
+
     - name: Set run id (reuse image tag)
       set_fact:
         jmeter_run_id: "{{ jmeter_image_tag }}"
+
     - name: Show tag
       debug:
         msg: "Building JMeter image tag {{ jmeter_image_tag }}"
+
     - name: Derive human readable run directory name
       set_fact:
         jmeter_local_run_dir: "{{ (jmeter_run_id | regex_replace('^(\\d{4})(\\d{2})(\\d{2})(\\d{2})(\\d{2})(\\d{2})$', '\\1-\\2-\\3_\\4-\\5-\\6')) }}"
+
     - name: Write PVC manifest (idempotent)
       copy:
         dest: "/tmp/{{ jmeter_pvc_name }}.yaml"
@@ -91,29 +103,35 @@
             resources:
               requests:
                 storage: {{ jmeter_pvc_storage }}
+
     - name: Apply PVC
       shell: kubectl apply -f /tmp/{{ jmeter_pvc_name }}.yaml
       register: pvc_apply
       changed_when: "'created' in pvc_apply.stdout or 'configured' in pvc_apply.stdout"
+
   roles:
     - jmeter_build
     - jmeter_deploy
+
   post_tasks:
     - name: Hint
       debug:
         msg: >-
           Run created as Job jmeter-loadgen-{{ jmeter_run_id }} (Succeeded once done). Rerun by re-invoking playbook.
+
     - name: Ensure local logs directory exists
       file:
         path: "{{ jmeter_local_logs_dir }}"
         state: directory
         mode: '0755'
+
     - name: Create per-run directory early (even if pod/collector later fails)
       file:
         path: "{{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}"
         state: directory
         mode: '0755'
       when: not ansible_check_mode
+
     - name: Write run metadata
       copy:
         dest: "{{ jmeter_local_logs_dir }}/{{ jmeter_local_run_dir }}/run.meta"
