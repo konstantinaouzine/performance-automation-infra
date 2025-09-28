@@ -55,15 +55,17 @@ spec:
               echo "JMeter raw user props: {{ jmeter_user_props | default('NONE') }}"
               EXTRA_J_ARGS=""
               if [ "{{ jmeter_user_props | default('') }}" != "" ]; then
-                IFS=';' read -r -a UP_ARR <<< "{{ jmeter_user_props }}"
-                for kv in "${UP_ARR[@]}"; do
+                RAW_PROPS="{{ jmeter_user_props }}"
+                OLD_IFS="$IFS"; IFS=';'
+                for kv in $RAW_PROPS; do
                   kv_trim=$(echo "$kv" | xargs)
                   [ -z "$kv_trim" ] && continue
                   case "$kv_trim" in
-                    *=*) EXTRA_J_ARGS+=" -J${kv_trim}" ;;
+                    *=*) EXTRA_J_ARGS="$EXTRA_J_ARGS -J${kv_trim}" ;;
                     *) echo "WARN: skipping malformed user prop '$kv_trim'" ;;
                   esac
                 done
+                IFS="$OLD_IFS"
               fi
               echo "Final constructed JMeter -J args:${EXTRA_J_ARGS}"
               echo "Launching JMeter..."
