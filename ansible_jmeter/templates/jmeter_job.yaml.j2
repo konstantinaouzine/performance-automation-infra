@@ -52,7 +52,20 @@ spec:
               RUN_DIR="/artifacts/${RUN_ID}"
               mkdir -p "$RUN_DIR"
               echo "Starting JMeter run_id=${RUN_ID} target=${APP_HOST} (artifacts in $RUN_DIR)"
-              echo "JMeter extra props: {{ jmeter_extra_jprops | default('NONE') }}"
+              echo "JMeter raw user props: {{ jmeter_user_props | default('NONE') }}"
+              EXTRA_J_ARGS=""
+              if [ "{{ jmeter_user_props | default('') }}" != "" ]; then
+                IFS=';' read -r -a UP_ARR <<< "{{ jmeter_user_props }}"
+                for kv in "${UP_ARR[@]}"; do
+                  kv_trim=$(echo "$kv" | xargs)
+                  [ -z "$kv_trim" ] && continue
+                  case "$kv_trim" in
+                    *=*) EXTRA_J_ARGS+=" -J${kv_trim}" ;;
+                    *) echo "WARN: skipping malformed user prop '$kv_trim'" ;;
+                  esac
+                done
+              fi
+              echo "Final constructed JMeter -J args:${EXTRA_J_ARGS}"
               echo "Launching JMeter..."
               jmeter -n -t /tests/{{ jmeter_test_file_effective }} \
                 -Jprometheus.port={{ jmeter_metrics_port }} \
@@ -60,8 +73,7 @@ spec:
                 -Jprometheus.ip=0.0.0.0 \
                 -Jrun_id=${RUN_ID} \
                 -Japp_host=${APP_HOST} \
-{% if jmeter_extra_jprops is defined and jmeter_extra_jprops|length > 0 %}                {{ jmeter_extra_jprops }} \
-{% endif %}
+                ${EXTRA_J_ARGS} \
                 -l $RUN_DIR/results.jtl \
                 -j $RUN_DIR/jmeter.log || EXIT=$?
               EXIT=${EXIT:-0}
