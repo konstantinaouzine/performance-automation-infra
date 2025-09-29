@@ -44,27 +44,7 @@ on:
         description: 'Seconds between dumps'
         required: false
         default: '5'
-      thread_dump_mode:
-        description: 'When to collect thread dumps (end, live, both)'
-        required: false
-        default: 'end'
-        type: choice
-        options:
-          - end
-          - live
-          - both
-      live_thread_dump_start_offset_seconds:
-        description: 'Seconds after test start to begin live dump collection'
-        required: false
-        default: '30'
-      live_thread_dump_count:
-        description: 'How many live thread dumps to capture'
-        required: false
-        default: '3'
-      live_thread_dump_interval_seconds:
-        description: 'Seconds between live dumps (if count >1)'
-        required: false
-        default: '10'
+      # (Demo) Live dump inputs removed to stay within 10-input GitHub limit
 
 jobs:
   run-ansible-jmeter:
@@ -141,11 +121,7 @@ jobs:
             echo "minikube not found - using default docker context"
           fi
 
-      - name: (POC placeholder) Start live thread dump collector
-        if: ${{ github.event.inputs.collect_thread_dumps == 'true' && (github.event.inputs.thread_dump_mode == 'live' || github.event.inputs.thread_dump_mode == 'both') }}
-        run: |
-          echo "[POC] Live thread dump collection requested (mode=${{ github.event.inputs.thread_dump_mode }} offset=${{ github.event.inputs.live_thread_dump_start_offset_seconds }}s count=${{ github.event.inputs.live_thread_dump_count }} interval=${{ github.event.inputs.live_thread_dump_interval_seconds }}s)"
-          echo "[POC] Actual live collection disabled in demo. No dumps will be produced."
+      # Live thread dump mode removed in POC to stay under input limit (placeholder omitted)
 
       - name: Run Ansible JMeter playbook
         id: ansible_run
@@ -187,10 +163,7 @@ jobs:
           echo 'After playbook directory tree:'
           find "$LOGS_DIR" -maxdepth 2 -type f -name run.meta -printf 'META %p\n' || true
 
-      - name: (POC placeholder) Wait for live collector
-        if: ${{ github.event.inputs.collect_thread_dumps == 'true' && (github.event.inputs.thread_dump_mode == 'live' || github.event.inputs.thread_dump_mode == 'both') }}
-        run: |
-          echo "[POC] No live collector running (feature disabled)."
+      # No live collector waiting step (feature disabled in POC)
 
       - name: Discover run dir from metadata (fallback)
         id: discover
@@ -317,10 +290,10 @@ jobs:
           echo "Captured test end time: $(grep end_ms $GITHUB_OUTPUT | cut -d= -f2)"
 
       - name: (POC placeholder) Collect JVM thread dumps (end-of-test)
-        if: ${{ always() && github.event.inputs.collect_thread_dumps == 'true' && (github.event.inputs.thread_dump_mode == 'end' || github.event.inputs.thread_dump_mode == 'both') }}
+        if: ${{ always() && github.event.inputs.collect_thread_dumps == 'true' }}
         run: |
-          echo "[POC] End-of-test thread dump collection requested (count=${{ github.event.inputs.thread_dump_count }} interval=${{ github.event.inputs.thread_dump_interval_seconds }}s)"
-          echo "[POC] Actual dump capture disabled in demo, no files produced."
+          echo "[POC] End-of-test thread dump collection requested (count=${{ github.event.inputs.thread_dump_count }} interval=${{ github.event.inputs.thread_dump_interval_seconds }}s)."
+          echo "[POC] Actual dump capture disabled in demo. No thread dump files generated."
 
       - name: Aggregate & persist run metrics (Prometheus + JMeter -> Postgres)
         id: aggregate
