@@ -32,7 +32,7 @@ on:
           - 500k
           - 1m
       collect_thread_dumps:
-        description: 'Collect JVM thread dumps automatically near test end'
+        description: 'Collect JVM thread dumps'
         type: boolean
         required: false
         default: false
