@@ -31,6 +31,8 @@
     jmeter_mem_limit: 512Mi
     jmeter_pvc_name: jmeter-artifacts
     jmeter_pvc_storage: 1Gi
+    # Ensure defined even if workflow supplies no overrides (prevents 'undefined variable')
+    jmeter_user_props: ""
 
   pre_tasks:
     - name: Debug repo root resolution
