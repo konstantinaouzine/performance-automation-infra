@@ -8,15 +8,28 @@ on:
         required: false
         default: ''
   schedule:
-    # Run at minute 5 of every hour (gives a few minutes after commit for GitHub to register the new schedule)
-    - cron: '5 * * * *'
+    # Original intention was :45 each hour; added a higher frequency entry for troubleshooting missed triggers.
+    # GitHub cron is UTC. A schedule only becomes active after it exists on the default branch.
+    # Frequent (every 15 min) run helps confirm scheduling is functioning; retain the :45 run for original semantics.
+    - cron: '45 * * * *'
+    - cron: '*/15 * * * *'
 
 jobs:
   noop:
-    runs-on: ubuntu-latest
+    # Use self-hosted so it appears on the user's WSL runner (make sure the runner has the 'self-hosted' label registered).
+    # If you also want GitHub-hosted runs, duplicate this job with runs-on: ubuntu-latest.
+    runs-on: self-hosted
     steps:
-      - name: Placeholder
+      - name: Placeholder / Diagnostics
         run: |
           echo "[Nightly] Placeholder workflow (demo)."
           echo "Triggered by: ${{ github.event_name }}"
           echo "Note: ${{ github.event.inputs.note }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run Number: ${{ github.run_number }}"
+          echo "Current UTC time: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "Job started on runner labels: $RUNNER_LABELS"
+          echo "Runner name: $RUNNER_NAME"
