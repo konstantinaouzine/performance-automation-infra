@@ -1,0 +1,21 @@
+---
+name: Nightly
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: 'Optional note for demo'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 2 * * *'
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: |
+          echo "[Nightly] Placeholder workflow (demo)."
+          echo "Triggered by: ${{ github.event_name }}"
+          echo "Note: ${{ github.event.inputs.note }}"

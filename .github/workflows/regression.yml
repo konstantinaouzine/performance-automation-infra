@@ -1,0 +1,19 @@
+---
+name: Regression
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: 'Area under regression (optional)'
+        required: false
+        default: ''
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: |
+          echo "[Regression] Placeholder workflow for demo UI visibility."
+          echo "Scope: ${{ github.event.inputs.scope }}"
+          echo "Add real steps when regression suite is ready."

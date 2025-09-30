@@ -1,0 +1,19 @@
+---
+name: Sanity
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: 'Optional note for demo'
+        required: false
+        default: ''
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: |
+          echo "[Sanity] This is a placeholder workflow for demo purposes."
+          echo "Note: ${{ github.event.inputs.note }}"
+          echo "Nothing else runs here."
