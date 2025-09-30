@@ -11,7 +11,7 @@ on:
     - cron: '45 * * * *'
 
 jobs:
-  noop:
+  Nightly_performance_run:
     # Use same dedicated label set as main POC workflow so the exact same runner executes it.
     # Runner must advertise ALL these labels: self-hosted, ansible, jmeter
     runs-on: [self-hosted, ansible, jmeter]
