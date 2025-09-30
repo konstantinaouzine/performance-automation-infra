@@ -8,11 +8,7 @@ on:
         required: false
         default: ''
   schedule:
-    # Original intention was :45 each hour; added a higher frequency entry for troubleshooting missed triggers.
-    # GitHub cron is UTC. A schedule only becomes active after it exists on the default branch.
-    # Frequent (every 15 min) run helps confirm scheduling is functioning; retain the :45 run for original semantics.
     - cron: '45 * * * *'
-    - cron: '*/15 * * * *'
 
 jobs:
   noop:
