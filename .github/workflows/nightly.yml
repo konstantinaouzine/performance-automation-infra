@@ -16,9 +16,9 @@ on:
 
 jobs:
   noop:
-    # Use self-hosted so it appears on the user's WSL runner (make sure the runner has the 'self-hosted' label registered).
-    # If you also want GitHub-hosted runs, duplicate this job with runs-on: ubuntu-latest.
-    runs-on: self-hosted
+    # Use same dedicated label set as main POC workflow so the exact same runner executes it.
+    # Runner must advertise ALL these labels: self-hosted, ansible, jmeter
+    runs-on: [self-hosted, ansible, jmeter]
     steps:
       - name: Placeholder / Diagnostics
         run: |

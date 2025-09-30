@@ -104,32 +104,32 @@ dashboards:
             },
             {"type":"row","title":"Aggregated Test KPIs graphs","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":11},"id":40},
             {
-              "type":"timeseries","title":"Latency p95 (ms) - Last 20","id":41,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":0,"y":12},
+              "type":"timeseries","title":"Latency p95 (ms)","id":41,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":0,"y":12},
               "targets":[{"refId":"A","rawSql":"SELECT * FROM (SELECT extract(epoch from tr.started_at)*1000 AS time, mp.run_id AS metric, mp.value AS value FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='latency_p95_ms' AND mp.run_id IN ($run_id) ORDER BY tr.started_at DESC LIMIT 20) q ORDER BY time ASC","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
               "fieldConfig":{"defaults":{"unit":"ms","decimals":2},"overrides":[]}
             },
             {
-              "type":"timeseries","title":"RPS Avg - Last 20","id":42,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":8,"y":12},
+              "type":"timeseries","title":"RPS Avg","id":42,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":8,"y":12},
               "targets":[{"refId":"A","rawSql":"SELECT * FROM (SELECT extract(epoch from tr.started_at)*1000 AS time, mp.run_id AS metric, mp.value AS value FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='rps_avg' AND mp.run_id IN ($run_id) ORDER BY tr.started_at DESC LIMIT 20) q ORDER BY time ASC","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
               "fieldConfig":{"defaults":{"unit":"ops","decimals":2},"overrides":[]}
             },
             {
-              "type":"timeseries","title":"Error % - Last 20","id":43,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":16,"y":12},
+              "type":"timeseries","title":"Error %","id":43,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":16,"y":12},
               "targets":[{"refId":"A","rawSql":"SELECT * FROM (SELECT extract(epoch from tr.started_at)*1000 AS time, mp.run_id AS metric, mp.value AS value FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='error_rate_percent' AND mp.run_id IN ($run_id) ORDER BY tr.started_at DESC LIMIT 20) q ORDER BY time ASC","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
               "fieldConfig":{"defaults":{"unit":"percent","decimals":2},"overrides":[]}
             },
             {
-              "type":"timeseries","title":"DB TPS Avg - Last 20","id":44,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":0,"y":18},
+              "type":"timeseries","title":"DB TPS Avg","id":44,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":0,"y":18},
               "targets":[{"refId":"A","rawSql":"SELECT * FROM (SELECT extract(epoch from tr.started_at)*1000 AS time, mp.run_id AS metric, mp.value AS value FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='db_tps_avg' AND mp.run_id IN ($run_id) ORDER BY tr.started_at DESC LIMIT 20) q ORDER BY time ASC","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
               "fieldConfig":{"defaults":{"unit":"ops","decimals":2},"overrides":[]}
             },
             {
-              "type":"timeseries","title":"CPU Avg (cores) - Last 20","id":45,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":8,"y":18},
+              "type":"timeseries","title":"CPU Avg (cores)","id":45,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":8,"y":18},
               "targets":[{"refId":"A","rawSql":"SELECT * FROM (SELECT extract(epoch from tr.started_at)*1000 AS time, mp.run_id AS metric, mp.value AS value FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='cpu_avg_cores' AND mp.run_id IN ($run_id) ORDER BY tr.started_at DESC LIMIT 20) q ORDER BY time ASC","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
               "fieldConfig":{"defaults":{"unit":"cores","decimals":3},"overrides":[]}
             },
             {
-              "type":"timeseries","title":"Heap Used Max (MB) - Last 20","id":46,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":16,"y":18},
+              "type":"timeseries","title":"Heap Used Max (MB)","id":46,"datasource":"PerfAgg","gridPos":{"h":6,"w":8,"x":16,"y":18},
               "targets":[{"refId":"A","rawSql":"SELECT * FROM (SELECT extract(epoch from tr.started_at)*1000 AS time, mp.run_id AS metric, (mp.value/1024/1024) AS value FROM metric_point mp JOIN test_run tr ON mp.run_id = tr.run_id WHERE mp.metric_name='jvm_heap_used_max_bytes' AND mp.run_id IN ($run_id) ORDER BY tr.started_at DESC LIMIT 20) q ORDER BY time ASC","format":"time_series","timeColumn":"time","metricColumn":"metric","valueColumn":"value"}],
               "fieldConfig":{"defaults":{"unit":"megabytes","decimals":1},"overrides":[]}
             }
