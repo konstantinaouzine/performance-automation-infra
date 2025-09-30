@@ -1,4 +1,4 @@
-name: Load Test - JMeter Ansible
+name: Main POC workflow
 run-name: "JMeter: ${{ github.event.inputs.test_file || 'test_db_load_only.jmx' }}"
 
 on:
