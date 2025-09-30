@@ -27,3 +27,4 @@ hpa:
   maxReplicas: 5
   targetCPUUtilizationPercentage: 40
   targetMemoryUtilizationPercentage: 70
+  enableMemoryMetric: false
