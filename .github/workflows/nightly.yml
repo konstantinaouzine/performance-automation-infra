@@ -8,7 +8,8 @@ on:
         required: false
         default: ''
   schedule:
-    - cron: '0 2 * * *'
+    # Run at minute 5 of every hour (gives a few minutes after commit for GitHub to register the new schedule)
+    - cron: '5 * * * *'
 
 jobs:
   noop:
