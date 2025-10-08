@@ -7,8 +7,6 @@ on:
         description: 'Optional note for demo'
         required: false
         default: ''
-  schedule:
-    - cron: '45 * * * *'
 
 jobs:
   Nightly_performance_run:
