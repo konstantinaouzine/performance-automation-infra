@@ -348,7 +348,7 @@ jobs:
               echo "WARN: Mimir (Prom API) not reachable on 9090 (continuing, aggregation may fail)" >&2
             fi
             set -e
-            export PROM_URL="http://127.0.0.1:9090/prometheus"
+            export PROM_URL="http://127.0.0.1:9090"
             export PROM_TENANT=primary
           else
             echo "PROM_URL preset: $PROM_URL"

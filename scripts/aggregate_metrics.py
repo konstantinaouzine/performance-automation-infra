@@ -363,7 +363,33 @@ def main():
         print("END_TS must be > START_TS", file=sys.stderr)
         sys.exit(1)
 
-    prom_url = env("PROM_URL", required=True).rstrip('/')
+    raw_prom_url = env("PROM_URL", required=True).rstrip('/')
+    # Auto-detect presence/absence of /prometheus prefix.
+    # Try raw first; if buildinfo 404, try with /prometheus; if both fail leave as is (will error later).
+    def _try_buildinfo(base: str) -> int:
+        try:
+            resp = requests.get(f"{base}/api/v1/status/buildinfo", headers=_headers(), timeout=5)
+            return resp.status_code
+        except Exception:
+            return -1
+    status_raw = _try_buildinfo(raw_prom_url)
+    prom_url = raw_prom_url
+    if status_raw == 404:
+        alt = raw_prom_url + "/prometheus"
+        status_alt = _try_buildinfo(alt)
+        if status_alt == 200:
+            prom_url = alt
+            print(f"INFO: Added /prometheus prefix (raw buildinfo 404, alt OK)", file=sys.stderr)
+    elif status_raw != 200:
+        # Try alt anyway if raw not 200
+        alt = raw_prom_url + "/prometheus"
+        status_alt = _try_buildinfo(alt)
+        if status_alt == 200:
+            prom_url = alt
+            print(f"INFO: Using /prometheus prefix (raw status {status_raw})", file=sys.stderr)
+        else:
+            print(f"WARN: Buildinfo check failed raw={status_raw} alt={status_alt}", file=sys.stderr)
+
     git_commit = env("GIT_COMMIT", "")
     git_branch = env("GIT_BRANCH", "")
 
@@ -376,7 +402,7 @@ def main():
         connect_timeout=10,
     )
 
-    print(f"Computing metrics for run_id={run_id} window={start_ts}->{end_ts} ({end_ts-start_ts}s)")
+    print(f"Computing metrics for run_id={run_id} window={start_ts}->{end_ts} ({end_ts-start_ts}s) prom_url={prom_url}")
     metrics = compute_metrics(prom_url, start_ts, end_ts)
 
     # Optionally enrich with JMeter response time metrics
