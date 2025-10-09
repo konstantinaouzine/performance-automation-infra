@@ -9,7 +9,7 @@ Environment Variables (required unless default stated):
   RUN_ID                Unique identifier of the performance test run
   START_TS              Start timestamp (unix seconds) of test window
   END_TS                End timestamp (unix seconds) of test window
-    PROM_URL              Base URL of Mimir (Prometheus-compatible) API (e.g. http://mimir.monitoring:9009/prometheus)
+  PROM_URL              Base URL of Mimir (Prometheus-compatible) API (e.g. http://mimir.monitoring:9009/prometheus)
   PG_HOST=localhost
   PG_PORT=15432
   PG_DB=perf_agg
@@ -53,11 +53,21 @@ def env(name: str, default: str = None, required: bool = False) -> str:
     return val
 
 
+TENANT_HEADER_NAME = "X-Scope-OrgID"
+TENANT_ID = os.getenv("PROM_TENANT") or os.getenv("MIMIR_TENANT") or os.getenv("MIMIR_TENANT_ID")
+
+
+def _headers():
+    if TENANT_ID:
+        return {TENANT_HEADER_NAME: TENANT_ID}
+    return {}
+
+
 def prom_instant_query(prom_url: str, query: str, ts: float = None) -> float:
     params = {"query": query}
     if ts is not None:
         params["time"] = f"{ts:.3f}"  # Prometheus expects float seconds
-    r = requests.get(f"{prom_url}/api/v1/query", params=params, timeout=30)
+    r = requests.get(f"{prom_url}/api/v1/query", params=params, timeout=30, headers=_headers())
     r.raise_for_status()
     data = r.json()
     if data.get("status") != "success":
@@ -85,7 +95,7 @@ def prom_range_reduction(prom_url: str, query: str, start: int, end: int, step: 
         "end": end,
         "step": step,
     }
-    r = requests.get(f"{prom_url}/api/v1/query_range", params=params, timeout=60)
+    r = requests.get(f"{prom_url}/api/v1/query_range", params=params, timeout=60, headers=_headers())
     r.raise_for_status()
     data = r.json()
     if data.get("status") != "success":
