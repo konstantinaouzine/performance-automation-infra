@@ -6,10 +6,11 @@ receivers:
 processors:
   batch: {}
 exporters:
-  prometheus:
-    endpoint: "0.0.0.0:8889"
-    # Add a namespace to clearly distinguish collected metrics (optional)
-    # namespace: "otel"
+  prometheusremotewrite:
+    endpoint: http://mimir.monitoring.svc.cluster.local:9009/api/v1/push
+    # Add mandatory tenant header for Mimir multi-tenancy; choose any identifier (e.g. 'primary').
+    headers:
+      X-Scope-OrgID: primary
   otlp:
     endpoint: "tempo.monitoring.svc.cluster.local:4317"
     tls:
@@ -22,7 +23,7 @@ service:
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [prometheus]
+      exporters: [prometheusremotewrite]
     traces:
       receivers: [otlp]
       processors: [batch]

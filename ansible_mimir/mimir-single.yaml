@@ -1,0 +1,136 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mimir-data
+  namespace: monitoring
+  labels:
+    app: mimir
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  # storageClassName: standard  # (optional) uncomment to pin a specific StorageClass
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mimir-config
+  namespace: monitoring
+  labels:
+    app: mimir
+data:
+  mimir.yaml: |
+    server:
+      log_level: info
+      http_listen_port: 9009
+    common:
+      path_prefix: /data
+    blocks_storage:
+      backend: filesystem
+      filesystem:
+        dir: /data/tsdb
+    compactor:
+      data_dir: /data/compactor
+    distributor:
+      ring:
+        instance_addr: 127.0.0.1
+        kvstore:
+          store: inmemory
+    ingester:
+      lifecycler:
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+      chunk_idle_period: 30m
+      max_transfer_retries: 0
+    ruler:
+      storage:
+        backend: filesystem
+        filesystem:
+          dir: /data/rules
+    frontend_worker:
+      frontend_address: 127.0.0.1:9095
+    frontend:
+      log_queries_longer_than: 5s
+    querier:
+      max_concurrent: 20
+    query_scheduler:
+      max_outstanding_requests_per_tenant: 100
+    runtime_config:
+      file: /data/runtime/runtime.yaml
+    limits:
+      max_cache_freshness: 10m
+    usage_stats:
+      enabled: false
+    # Enable the Prometheus API compatibility endpoint
+    api:
+      prometheus_http_prefix: /prometheus
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mimir
+  namespace: monitoring
+  labels:
+    app: mimir
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mimir
+  template:
+    metadata:
+      labels:
+        app: mimir
+    spec:
+      containers:
+        - name: mimir
+          image: grafana/mimir:2.12.0
+          args:
+            - -config.file=/etc/mimir/mimir.yaml
+          ports:
+            - containerPort: 9009
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mimir
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /prometheus/api/v1/status/buildinfo
+              port: 9009
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: mimir-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: mimir-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mimir
+  namespace: monitoring
+  labels:
+    app: mimir
+spec:
+  ports:
+    - name: http
+      port: 9009
+      targetPort: http
+  selector:
+    app: mimir
+  type: ClusterIP

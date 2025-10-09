@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Aggregate Prometheus metrics for a single performance test run and store snapshot values
+Aggregate Mimir (Prometheus-compatible) metrics for a single performance test run and store snapshot values
 into Postgres tables test_run & metric_point.
 
 Idempotent: re-running for same RUN_ID will upsert metric rows.
@@ -9,7 +9,7 @@ Environment Variables (required unless default stated):
   RUN_ID                Unique identifier of the performance test run
   START_TS              Start timestamp (unix seconds) of test window
   END_TS                End timestamp (unix seconds) of test window
-  PROM_URL              Base URL of Prometheus (e.g. http://prometheus-server.perf:9090)
+    PROM_URL              Base URL of Mimir (Prometheus-compatible) API (e.g. http://mimir.monitoring:9009/prometheus)
   PG_HOST=localhost
   PG_PORT=15432
   PG_DB=perf_agg

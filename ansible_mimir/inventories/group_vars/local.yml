@@ -1,0 +1,4 @@
+---
+# Override defaults here if needed for local deploy
+# mimir_storage_size: 15Gi
+# mimir_storage_class: standard

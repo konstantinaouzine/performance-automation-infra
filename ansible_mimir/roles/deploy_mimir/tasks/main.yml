@@ -1,0 +1,45 @@
+---
+- name: Ensure namespace exists
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Namespace
+    name: "{{ mimir_namespace }}"
+  tags: [mimir, namespace]
+
+- name: Apply Mimir ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    template: mimir-configmap.yaml.j2
+  tags: [mimir, configmap]
+
+- name: Apply Mimir PVC
+  kubernetes.core.k8s:
+    state: present
+    template: mimir-pvc.yaml.j2
+  tags: [mimir, pvc]
+
+- name: Render Mimir deployment/service manifest locally (debug)
+  template:
+    src: mimir-deployment.yaml.j2
+    dest: /tmp/mimir-deployment.rendered.yaml
+  run_once: true
+  tags: [mimir, debug]
+
+- name: Show rendered manifest (debug)
+  command: cat /tmp/mimir-deployment.rendered.yaml
+  register: _rendered_manifest
+  changed_when: false
+  run_once: true
+  tags: [mimir, debug]
+
+- name: Debug rendered manifest snippet
+  debug:
+    msg: "{{ _rendered_manifest.stdout.split('\n') | select('match','^apiVersion') | list | length > 0 and 'Rendered OK' or 'Rendered empty' }}"
+  run_once: true
+  tags: [mimir, debug]
+
+- name: Apply Mimir Deployment & Service
+  kubernetes.core.k8s:
+    state: present
+    template: mimir-deployment.yaml.j2
+  tags: [mimir, deploy]

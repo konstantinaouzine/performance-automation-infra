@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ mimir_service_name }}
+  namespace: {{ mimir_namespace }}
+  labels:
+    app: mimir
+spec:
+  replicas: {{ mimir_replica_count }}
+  selector:
+    matchLabels:
+      app: mimir
+  template:
+    metadata:
+      labels:
+        app: mimir
+      annotations:
+        # Force rollout on ConfigMap content change
+        checksum/config: {{ lookup('template', 'mimir-configmap.yaml.j2') | hash('sha1') }}
+    spec:
+      volumes:
+        - name: config
+          configMap:
+            name: {{ mimir_config_cm }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ mimir_pvc_name }}
+      containers:
+        - name: mimir
+          image: {{ mimir_image }}
+          args:
+            - -config.file=/etc/mimir/mimir.yaml
+          ports:
+            - name: http
+              containerPort: 9009
+          readinessProbe:
+            httpGet:
+              path: {{ mimir_prometheus_http_prefix }}/api/v1/status/buildinfo
+              port: 9009
+            initialDelaySeconds: 5
+            periodSeconds: 10
+{% if mimir_enable_liveness %}
+          livenessProbe:
+            httpGet:
+              path: {{ mimir_prometheus_http_prefix }}/api/v1/status/buildinfo
+              port: 9009
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+{% endif %}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mimir
+            - name: data
+              mountPath: /data
+{% if mimir_resources %}
+          resources:
+{{ mimir_resources | to_nice_yaml(indent=10) | indent(10) }}
+{% endif %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ mimir_service_name }}
+  namespace: {{ mimir_namespace }}
+  labels:
+    app: mimir
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 9009
+      targetPort: http
+  selector:
+    app: mimir

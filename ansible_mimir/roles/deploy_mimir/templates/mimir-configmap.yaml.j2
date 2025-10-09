@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ mimir_config_cm }}
+  namespace: {{ mimir_namespace }}
+  labels:
+    app: mimir
+data:
+  mimir.yaml: |
+    server:
+      log_level: info
+      http_listen_port: 9009
+    # Minimal single-binary filesystem storage config
+    blocks_storage:
+      backend: filesystem
+      filesystem:
+        dir: /data/blocks
+      tsdb:
+        dir: /data/tsdb
+    compactor:
+      data_dir: /data/compactor
+    ingester:
+      ring:
+        kvstore:
+          store: inmemory
+        replication_factor: 1
+    distributor:
+      ring:
+        kvstore:
+          store: inmemory
+    limits:
+      max_cache_freshness: 10m
+    api:
+      prometheus_http_prefix: {{ mimir_prometheus_http_prefix }}
+    usage_stats:
+      enabled: false

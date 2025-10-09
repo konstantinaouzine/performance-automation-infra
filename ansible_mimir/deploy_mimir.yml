@@ -1,0 +1,7 @@
+---
+- name: Deploy single-process Grafana Mimir
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - role: deploy_mimir

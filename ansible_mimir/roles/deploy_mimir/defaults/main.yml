@@ -1,0 +1,11 @@
+---
+mimir_namespace: monitoring
+mimir_image: grafana/mimir:2.12.0
+mimir_replica_count: 1
+mimir_storage_size: 10Gi
+mimir_storage_class: ""  # optional override
+mimir_pvc_name: mimir-data
+mimir_config_cm: mimir-config
+mimir_service_name: mimir
+mimir_prometheus_http_prefix: /prometheus
+mimir_resources: {}

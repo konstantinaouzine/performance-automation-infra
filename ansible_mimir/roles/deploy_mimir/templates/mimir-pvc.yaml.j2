@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ mimir_pvc_name }}
+  namespace: {{ mimir_namespace }}
+  labels:
+    app: mimir
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ mimir_storage_size }}
+  {% if mimir_storage_class %}storageClassName: {{ mimir_storage_class }}{% endif %}
