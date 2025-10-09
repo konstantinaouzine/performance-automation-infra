@@ -173,18 +173,11 @@ DB_SELECTOR = f'{{datname!~"template.*",datname=~"{DB_DATNAME_REGEX}"}}'
 def build_queries(window_seconds: int) -> Dict[str, str]:
     w = window_seconds
     return {
-        # p95 latency (milliseconds histogram). We'll add a fallback to *_seconds_bucket if NaN later.
+        # Основная (как было до миграции) — используем milliseconds_*; если NaN, fallback ниже.
         "latency_p95_ms": f"histogram_quantile(0.95, sum by (le) (rate(http_server_requests_milliseconds_bucket{{{BASE_MATCHER}}}[{w}s])))",
-        # Average RPS across all URIs and statuses
         "rps_avg": f"sum(rate(http_server_requests_milliseconds_count{{{BASE_MATCHER}}}[{w}s]))",
-        # 5xx counters for error percentage (client computed)
         "_errors": f"sum(rate(http_server_requests_milliseconds_count{{{BASE_MATCHER},status=~\"5..\"}}[{w}s]))",
         "_total": f"sum(rate(http_server_requests_milliseconds_count{{{BASE_MATCHER}}}[{w}s]))",
-        # JVM heap live data peak (bytes) during window
-        "jvm_heap_used_max_bytes": f"max_over_time(jvm_gc_live_data_size_bytes{JVM_LIVE_SELECTOR}[{w}s])",
-        # Average CPU cores consumed
-        "cpu_avg_cores": f"avg(rate(container_cpu_usage_seconds_total{CPU_SELECTOR}[{w}s]))",
-        # Postgres TPS (commit + rollback)
         "db_tps_avg": f"sum(rate(pg_stat_database_xact_commit{DB_SELECTOR}[{w}s]) + rate(pg_stat_database_xact_rollback{DB_SELECTOR}[{w}s]))",
     }
 
@@ -193,6 +186,11 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
     window_seconds = end - start
     queries = build_queries(window_seconds)
     metrics: Dict[str, Tuple[float, str]] = {}
+    # Optionally shift query timestamp earlier to account for remote write latency
+    offset_sec = int(os.getenv("PROM_QUERY_OFFSET_SECONDS", "0"))
+    query_ts = end - offset_sec if offset_sec > 0 else end
+    if offset_sec > 0:
+        print(f"INFO: Using query timestamp {query_ts} (offset -{offset_sec}s from end)", file=sys.stderr)
 
     # Execute queries
     http_samples_detected = False
@@ -200,7 +198,7 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
         if name.startswith("_"):
             continue
         try:
-            value = prom_instant_query(prom_url, q, ts=end)
+            value = prom_instant_query(prom_url, q, ts=query_ts)
         except Exception as e:
             print(f"WARN: query failed {name}: {e}", file=sys.stderr)
             value = float("nan")
@@ -217,12 +215,12 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
 
     # Error rate needs errors/total
     try:
-        errors = prom_instant_query(prom_url, queries["_errors"], ts=end)
+        errors = prom_instant_query(prom_url, queries["_errors"], ts=query_ts)
     except Exception as e:
         print(f"WARN: _errors query failed: {e}", file=sys.stderr)
         errors = float("nan")
     try:
-        total = prom_instant_query(prom_url, queries["_total"], ts=end)
+        total = prom_instant_query(prom_url, queries["_total"], ts=query_ts)
     except Exception as e:
         print(f"WARN: _total query failed: {e}", file=sys.stderr)
         total = float("nan")
@@ -231,56 +229,78 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
     metrics["error_rate_percent"] = (error_pct, "percent")
 
     # Track whether there was any traffic (total requests > 0)
-    traffic_present = 0 if (math.isnan(total) or total == 0) else 1
-    # If HTTP total missing but we have DB TPS or JVM heap activity, still mark traffic_present=1 (non-HTTP workload)
-    if traffic_present == 0:
-        alt_activity = []
-        for k in ("db_tps_avg", "jvm_heap_used_max_bytes", "cpu_avg_cores"):
-            v = metrics.get(k, (float("nan"), ))[0]
-            if not math.isnan(v) and v > 0:
-                alt_activity.append(k)
-        if alt_activity:
-            traffic_present = 1
-            print(f"INFO: traffic_present forced to 1 due to activity in: {', '.join(alt_activity)}", file=sys.stderr)
-    metrics["traffic_present"] = (float(traffic_present), "flag")
+    # traffic_present / jvm / cpu убраны как не требуемые для dashboard
 
-    # Latency fallback: if NaN, try seconds-based histogram name then convert to ms
+    # ----- Fallback chains (минимально необходимые) -----
+    # latency: если milliseconds_* отсутствуют, пробуем seconds_bucket и duration_seconds_bucket
     lat_val, lat_unit = metrics["latency_p95_ms"]
     if math.isnan(lat_val):
-        fallback_query = f"histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{{{BASE_MATCHER}}}[{window_seconds}s])))"
-        try:
-            fallback_val = prom_instant_query(prom_url, fallback_query, ts=end)
-            if not math.isnan(fallback_val):
-                metrics["latency_p95_ms"] = (fallback_val * 1000.0, lat_unit)
-                print("INFO: used fallback *_seconds_bucket for latency", file=sys.stderr)
-        except Exception as fe:
-            print(f"WARN: latency fallback failed: {fe}", file=sys.stderr)
+        for expr in [
+            f"histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{{{BASE_MATCHER}}}[{window_seconds}s])))",
+            f"histogram_quantile(0.95, sum by (le) (rate(http_server_requests_duration_seconds_bucket{{{BASE_MATCHER}}}[{window_seconds}s])))",
+        ]:
+            try:
+                v = prom_instant_query(prom_url, expr, ts=query_ts)
+                if not math.isnan(v):
+                    metrics["latency_p95_ms"] = (v * 1000.0, lat_unit)
+                    print("INFO: latency fallback success (seconds buckets)", file=sys.stderr)
+                    break
+            except Exception as e:
+                print(f"WARN: latency fallback expr failed: {e}", file=sys.stderr)
+
+    # rps: fallback на seconds/duration_seconds count если milliseconds_* отсутствуют
+    rps_val, _ = metrics["rps_avg"]
+    if math.isnan(rps_val):
+        for expr in [
+            f"sum(rate(http_server_requests_seconds_count{{{BASE_MATCHER}}}[{window_seconds}s]))",
+            f"sum(rate(http_server_requests_duration_seconds_count{{{BASE_MATCHER}}}[{window_seconds}s]))",
+        ]:
+            try:
+                v = prom_instant_query(prom_url, expr, ts=query_ts)
+                if not math.isnan(v):
+                    metrics["rps_avg"] = (v, "requests_per_second")
+                    print("INFO: rps_avg fallback success (seconds count)", file=sys.stderr)
+                    break
+            except Exception as e:
+                print(f"WARN: rps fallback expr failed: {e}", file=sys.stderr)
+
+    # Убраны fallback для JVM и CPU — не требуются
 
     # If still NaN but no traffic, normalize to 0 for dashboard consistency
+    # Если нет запросов (total NaN или 0) — выставим latency и error_rate к 0, чтобы не было дыр
     lat_val, lat_unit = metrics["latency_p95_ms"]
-    if math.isnan(lat_val) and metrics.get("traffic_present", (0,))[0] == 0:
-        metrics["latency_p95_ms"] = (0.0, lat_unit)
-        print("INFO: latency set to 0 due to no traffic", file=sys.stderr)
-
-    # Normalize error rate to 0 when no traffic (avoid skipped NaN)
     err_val, err_unit = metrics["error_rate_percent"]
-    total_requests_zero = metrics.get("traffic_present", (0,))[0] == 0
-    if math.isnan(err_val) and total_requests_zero:
-        metrics["error_rate_percent"] = (0.0, err_unit)
-        print("INFO: error_rate_percent set to 0 due to no traffic", file=sys.stderr)
+    if math.isnan(total) or total == 0:
+        if math.isnan(lat_val):
+            metrics["latency_p95_ms"] = (0.0, lat_unit)
+            print("INFO: latency set to 0 (no requests)", file=sys.stderr)
+        if math.isnan(err_val):
+            metrics["error_rate_percent"] = (0.0, err_unit)
+            print("INFO: error_rate_percent set to 0 (no requests)", file=sys.stderr)
 
     # Filter internal helper keys if any remain
     rows: List[Tuple[str, float, str]] = []
     skipped = []
+    allowed = {"latency_p95_ms","rps_avg","error_rate_percent","db_tps_avg"}
     for k, (v, u) in metrics.items():
         if k.startswith("_"):
+            continue
+        if k not in allowed:
             continue
         if math.isnan(v):
             skipped.append(k)
             continue
         rows.append((k, v, u))
     if skipped:
-        print(f"INFO: skipping NaN metrics (not inserted): {', '.join(skipped)}", file=sys.stderr)
+        # По требованию: хотим видеть метрики в БД даже если пусто -> запишем 0
+        store_zero = os.getenv("STORE_ZERO_FOR_NAN", "true").lower() in ("1","true","yes")
+        if store_zero:
+            for k in skipped:
+                # latency/error/rps/jvm/CPU только
+                rows.append((k, 0.0, metrics.get(k,(0.0,"unit"))[1] if k in metrics else "unit"))
+            print(f"INFO: inserted zeros for previously NaN metrics: {', '.join(skipped)}", file=sys.stderr)
+        else:
+            print(f"INFO: skipping NaN metrics (not inserted): {', '.join(skipped)}", file=sys.stderr)
     return rows
 
 
@@ -423,6 +443,45 @@ def main():
 
     git_commit = env("GIT_COMMIT", "")
     git_branch = env("GIT_BRANCH", "")
+
+    # Optional diagnostic: list existing series for expected metric names to understand missing data
+    if os.getenv("DIAG_PROM_DISCOVERY", "false").lower() in ("1","true","yes"):
+        try:
+            # Use both milliseconds & seconds variants plus JVM & CPU candidates
+            match_params = [
+                "http_server_requests_milliseconds_count",
+                "http_server_requests_seconds_count",
+                "http_server_requests_duration_seconds_count",
+                "http_server_requests_milliseconds_bucket",
+                "http_server_requests_seconds_bucket",
+                "http_server_requests_duration_seconds_bucket",
+                "container_cpu_usage_seconds_total",
+                "process_cpu_seconds_total",
+                "jvm_gc_live_data_size_bytes",
+                "jvm_memory_used_bytes",
+            ]
+            series_params = []
+            for m in match_params:
+                series_params.append(("match[]", m))
+            # Add time window hint (Prometheus expects rfc3339 or unix seconds). We'll use unix from start_ts to end_ts
+            series_params.extend([("start", str(start_ts)), ("end", str(end_ts))])
+            resp = requests.get(f"{prom_url}/api/v1/series", params=series_params, timeout=30, headers=_headers())
+            if resp.status_code == 200:
+                sd = resp.json()
+                if sd.get("status") == "success":
+                    series = sd.get("data", [])
+                    print("DIAG: discovered series candidates (truncated labels):", file=sys.stderr)
+                    for s in series[:40]:  # limit noise
+                        lbls = {k: v for k, v in s.items() if k in ("__name__","job","application","status","le","datname")}
+                        print(f"  {lbls}", file=sys.stderr)
+                    if len(series) > 40:
+                        print(f"  ... ({len(series)-40} more)", file=sys.stderr)
+                else:
+                    print(f"DIAG WARN: /series returned non-success: {sd}", file=sys.stderr)
+            else:
+                print(f"DIAG WARN: /series HTTP {resp.status_code}: {resp.text[:200]}", file=sys.stderr)
+        except Exception as de:
+            print(f"DIAG ERROR: series discovery failed: {de}", file=sys.stderr)
 
     pg_conn = psycopg2.connect(
         host=env("PG_HOST", "localhost"),
