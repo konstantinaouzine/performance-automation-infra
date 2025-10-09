@@ -63,15 +63,27 @@ def _headers():
     return {}
 
 
-def prom_instant_query(prom_url: str, query: str, ts: float = None) -> float:
+def prom_instant_query(prom_url: str, query: str, ts: float = None, retries: int = 3, backoff: float = 1.0) -> float:
     params = {"query": query}
     if ts is not None:
         params["time"] = f"{ts:.3f}"  # Prometheus expects float seconds
-    r = requests.get(f"{prom_url}/api/v1/query", params=params, timeout=30, headers=_headers())
-    r.raise_for_status()
-    data = r.json()
-    if data.get("status") != "success":
-        raise RuntimeError(f"Prometheus query failed: {data}")
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.get(f"{prom_url}/api/v1/query", params=params, timeout=30, headers=_headers())
+            if r.status_code == 404 and attempt < retries:
+                time.sleep(backoff * attempt)
+                continue
+            r.raise_for_status()
+            data = r.json()
+            if data.get("status") != "success":
+                raise RuntimeError(f"Prometheus query failed: {data}")
+            break
+        except Exception as e:
+            last_exc = e
+            if attempt == retries:
+                raise
+            time.sleep(backoff * attempt)
     result = data.get("data", {}).get("result", [])
     if not result:
         return float("nan")
@@ -183,6 +195,7 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
     metrics: Dict[str, Tuple[float, str]] = {}
 
     # Execute queries
+    http_samples_detected = False
     for name, q in queries.items():
         if name.startswith("_"):
             continue
@@ -199,6 +212,8 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
             "db_tps_avg": "transactions_per_sec",
         }.get(name, "unit")
         metrics[name] = (value, unit)
+        if name == "rps_avg" and not math.isnan(value) and value > 0:
+            http_samples_detected = True
 
     # Error rate needs errors/total
     try:
@@ -217,6 +232,16 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
 
     # Track whether there was any traffic (total requests > 0)
     traffic_present = 0 if (math.isnan(total) or total == 0) else 1
+    # If HTTP total missing but we have DB TPS or JVM heap activity, still mark traffic_present=1 (non-HTTP workload)
+    if traffic_present == 0:
+        alt_activity = []
+        for k in ("db_tps_avg", "jvm_heap_used_max_bytes", "cpu_avg_cores"):
+            v = metrics.get(k, (float("nan"), ))[0]
+            if not math.isnan(v) and v > 0:
+                alt_activity.append(k)
+        if alt_activity:
+            traffic_present = 1
+            print(f"INFO: traffic_present forced to 1 due to activity in: {', '.join(alt_activity)}", file=sys.stderr)
     metrics["traffic_present"] = (float(traffic_present), "flag")
 
     # Latency fallback: if NaN, try seconds-based histogram name then convert to ms
@@ -372,7 +397,13 @@ def main():
             return resp.status_code
         except Exception:
             return -1
+    # Wait up to readiness_wait seconds for buildinfo to become available (handles race right after port-forward)
+    readiness_wait = int(os.getenv("PROM_READINESS_WAIT", "15"))
+    deadline = time.time() + readiness_wait
     status_raw = _try_buildinfo(raw_prom_url)
+    while status_raw not in (200, 404) and time.time() < deadline:
+        time.sleep(1)
+        status_raw = _try_buildinfo(raw_prom_url)
     prom_url = raw_prom_url
     if status_raw == 404:
         alt = raw_prom_url + "/prometheus"
