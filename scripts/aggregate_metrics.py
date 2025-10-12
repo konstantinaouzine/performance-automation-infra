@@ -214,12 +214,24 @@ def build_queries(window_seconds: int, matcher: str = None) -> Dict[str, str]:
 def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, float, str]]:
     # Быстрая проверка что PROM_URL действительно Prometheus/Mimir API, а не просто /metrics экспортер.
     try:
-        _ = prom_instant_query(prom_url, "up")  # неважно что вернет; важен успех запроса
+        _ = prom_instant_query(prom_url, "up")  # пробный запрос
     except Exception as api_e:
-        print(f"ERROR: Endpoint {prom_url} не выглядит как Prometheus API (/api/v1/query недоступен): {api_e}", file=sys.stderr)
-        print("HINT: Используйте базовый URL Mimir, напр. http://<mimir-service>:9009/prometheus", file=sys.stderr)
-        # Продолжаем чтобы сформировать метрики с нулями, но помечаем.
-        os.environ["_PROM_API_FAILED"] = "true"
+        # Если 404 и нет суффикса /prometheus – попробуем автоматически добавить.
+        msg = str(api_e)
+        if ("404" in msg or "Not Found" in msg) and not prom_url.rstrip("/").endswith("prometheus"):
+            alt = prom_url.rstrip("/") + "/prometheus"
+            try:
+                _ = prom_instant_query(alt, "up")
+                print(f"INFO: Авто-добавлен /prometheus префикс: {alt}", file=sys.stderr)
+                prom_url = alt
+            except Exception as alt_e:
+                print(f"ERROR: Endpoint {prom_url} не выглядит как Prometheus API (/api/v1/query недоступен): {api_e}; alt тоже не подошел: {alt_e}", file=sys.stderr)
+                print("HINT: Используйте базовый URL Mimir, напр. http://<mimir-service>:9009/prometheus", file=sys.stderr)
+                os.environ["_PROM_API_FAILED"] = "true"
+        else:
+            print(f"ERROR: Endpoint {prom_url} не выглядит как Prometheus API (/api/v1/query недоступен): {api_e}", file=sys.stderr)
+            print("HINT: Используйте базовый URL Mimir, напр. http://<mimir-service>:9009/prometheus", file=sys.stderr)
+            os.environ["_PROM_API_FAILED"] = "true"
     window_seconds = end - start
     queries = build_queries(window_seconds)
     metrics: Dict[str, Tuple[float, str]] = {}

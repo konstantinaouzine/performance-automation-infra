@@ -346,24 +346,23 @@ jobs:
 
           # --- Port-forward Mimir (if PROM_URL not provided) ---
           if [ -z "${PROM_URL:-}" ]; then
-            # Switched to Grafana Mimir single-process (Prometheus compatible). Service name 'mimir'.
             PROM_NS=${PROM_NAMESPACE:-monitoring}
             PROM_SVC=${PROM_SERVICE:-mimir}
-            # Mimir exposes Prometheus API under /prometheus
-            echo "Port-forwarding Mimir svc/${PROM_SVC} in ${PROM_NS} 9009->9090 (Prom API prefix /prometheus)";
+            # Correct mapping: local 9009 -> service 9009 (no remap). Prom API under /prometheus.
+            echo "Port-forwarding Mimir svc/${PROM_SVC} in ${PROM_NS} 9009->9009 (Prom API prefix /prometheus)";
             set +e
-            kubectl port-forward -n "$PROM_NS" svc/"$PROM_SVC" 9090:9009 >/tmp/prom_pf.log 2>&1 &
+            kubectl port-forward -n "$PROM_NS" svc/"$PROM_SVC" 9009:9009 >/tmp/prom_pf.log 2>&1 &
             PF_PROM=$!
-            # Wait up to ~15s
-            for i in $(seq 1 30); do
-              if curl -sf -H 'X-Scope-OrgID: primary' http://127.0.0.1:9090/prometheus/api/v1/status/buildinfo >/dev/null 2>&1; then break; fi
+            # Wait up to ~12s for buildinfo
+            for i in $(seq 1 24); do
+              if curl -sf -H 'X-Scope-OrgID: primary' http://127.0.0.1:9009/prometheus/api/v1/status/buildinfo >/dev/null 2>&1; then break; fi
               sleep 0.5
             done
-            if ! curl -sf -H 'X-Scope-OrgID: primary' http://127.0.0.1:9090/prometheus/api/v1/status/buildinfo >/dev/null 2>&1; then
-              echo "WARN: Mimir (Prom API) not reachable on 9090 (continuing, aggregation may fail)" >&2
+            if ! curl -sf -H 'X-Scope-OrgID: primary' http://127.0.0.1:9009/prometheus/api/v1/status/buildinfo >/dev/null 2>&1; then
+              echo "WARN: Mimir (Prom API) not reachable on 9009 (continuing, aggregation may fail)" >&2
             fi
             set -e
-            export PROM_URL="http://127.0.0.1:9090"
+            export PROM_URL="http://127.0.0.1:9009/prometheus"
             export PROM_TENANT=primary
           else
             echo "PROM_URL preset: $PROM_URL"
