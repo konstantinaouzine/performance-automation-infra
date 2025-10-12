@@ -221,6 +221,8 @@ jobs:
 
       - name: SLA & summary
         id: sla
+        # Skip if workflow cancelled or JMeter playbook failed / was not run successfully
+        if: ${{ !cancelled() && steps.ansible_run.outcome == 'success' }}
         run: |
           set -euo pipefail
           LATEST='${{ steps.locate.outputs.latest_dir }}'
@@ -295,20 +297,22 @@ jobs:
 
       - name: Capture test end time
         id: mark_end
-        if: ${{ always() }}
+        # Still capture end time unless run cancelled entirely
+        if: ${{ always() && !cancelled() }}
         run: |
           echo "end_ms=$(date +%s%3N)" >> $GITHUB_OUTPUT
           echo "Captured test end time: $(grep end_ms $GITHUB_OUTPUT | cut -d= -f2)"
 
       - name: (POC placeholder) Collect JVM thread dumps (end-of-test)
-        if: ${{ always() && github.event.inputs.collect_thread_dumps == 'true' }}
+        if: ${{ always() && !cancelled() && github.event.inputs.collect_thread_dumps == 'true' }}
         run: |
           echo "[POC] End-of-test thread dump collection requested (count=${{ github.event.inputs.thread_dump_count }} interval=${{ github.event.inputs.thread_dump_interval_seconds }}s)."
           echo "[POC] Actual dump capture disabled in demo. No thread dump files generated."
 
       - name: Aggregate & persist run metrics (Mimir + JMeter -> Postgres)
         id: aggregate
-        if: ${{ always() }}
+        # Allow aggregation even if JMeter failed, but skip if run cancelled early
+        if: ${{ always() && !cancelled() }}
         env:
           GIT_COMMIT: ${{ github.sha }}
           GIT_BRANCH: ${{ github.ref_name }}
@@ -456,7 +460,7 @@ jobs:
 
       - name: (Optional) Grafana port-forward
         id: grafana_pf
-        if: ${{ always() }}
+        if: ${{ !cancelled() && steps.ansible_run.outcome == 'success' }}
         run: |
           set -euo pipefail
           GRAFANA_URL_PRESET='${GRAFANA_URL:-}'
@@ -490,7 +494,7 @@ jobs:
 
       - name: Grafana snapshots
         id: grafana_snapshots
-        if: ${{ always() }}
+        if: ${{ !cancelled() && steps.ansible_run.outcome == 'success' }}
         run: |
           set -euo pipefail
           GRAFANA_URL_PRESET="${GRAFANA_URL:-}"
@@ -616,7 +620,7 @@ jobs:
           done
 
       - name: Cleanup port-forward
-        if: ${{ always() && steps.grafana_pf.outputs.pf_pid != '' }}
+        if: ${{ !cancelled() && steps.grafana_pf.outputs.pf_pid != '' }}
         run: |
           set -euo pipefail
           PID='${{ steps.grafana_pf.outputs.pf_pid }}'
@@ -628,7 +632,7 @@ jobs:
           fi
 
       - name: Email report (SendGrid API)
-        if: ${{ always() && github.event.inputs.email_to != '' }}
+        if: ${{ !cancelled() && steps.ansible_run.outcome == 'success' && github.event.inputs.email_to != '' }}
         run: |
           set -euo pipefail
           SENDGRID_API_KEY="${SENDGRID_API_KEY:-}"
@@ -740,8 +744,9 @@ jobs:
           rm -f resp.txt payload.json || true
 
       - name: Assemble artifacts bundle
-        if: ${{ always() }}
         id: assemble
+        # Skip full bundle if cancelled; still allow on failures for debugging
+        if: ${{ always() && !cancelled() }}
         run: |
           set -euo pipefail
           BUNDLE_BASE="artifacts_bundle"
@@ -780,6 +785,7 @@ jobs:
           echo "Bundle contents:"; find "$BUNDLE_DIR" -maxdepth 2 -type f -printf '%P\n' || true
 
       - name: Upload artifacts bundle
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: loadtest-${{ steps.run_id.outputs.run_id || github.run_number }}
