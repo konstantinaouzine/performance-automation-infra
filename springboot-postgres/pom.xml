@@ -55,6 +55,11 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-otlp</artifactId>
         </dependency>
+        <!-- Add Prometheus registry to keep legacy http_server_requests_* metrics compatible with existing queries -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
         <!-- Micrometer tracing bridge to OpenTelemetry -->
         <dependency>
             <groupId>io.micrometer</groupId>

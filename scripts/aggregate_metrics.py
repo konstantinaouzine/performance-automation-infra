@@ -6,10 +6,11 @@ into Postgres tables test_run & metric_point.
 Idempotent: re-running for same RUN_ID will upsert metric rows.
 
 Environment Variables (required unless default stated):
-  RUN_ID                Unique identifier of the performance test run
-  START_TS              Start timestamp (unix seconds) of test window
-  END_TS                End timestamp (unix seconds) of test window
-  PROM_URL              Base URL of Mimir (Prometheus-compatible) API (e.g. http://mimir.monitoring:9009/prometheus)
+    RUN_ID                Unique identifier of the performance test run
+    START_TS              Start timestamp (unix seconds) of test window
+    END_TS                End timestamp (unix seconds) of test window
+    PROM_URL              Base URL of Mimir Prometheus API (Grafana uses this). Default:
+                                                http://mimir.monitoring.svc.cluster.local:9009/prometheus
   PG_HOST=localhost
   PG_PORT=15432
   PG_DB=perf_agg
@@ -54,7 +55,24 @@ def env(name: str, default: str = None, required: bool = False) -> str:
 
 
 TENANT_HEADER_NAME = "X-Scope-OrgID"
+# Автоопределение tenant: сначала переменные окружения, затем парсинг grafana-values.yaml, затем дефолт 'primary'
 TENANT_ID = os.getenv("PROM_TENANT") or os.getenv("MIMIR_TENANT") or os.getenv("MIMIR_TENANT_ID")
+if not TENANT_ID:
+    gv_path = os.path.join(os.getcwd(), "ansible_grafana/roles/deploy_grafana/files/grafana-values.yaml")
+    if os.path.isfile(gv_path):
+        try:
+            import re
+            with open(gv_path,'r') as f:
+                text = f.read()
+            m = re.search(r'httpHeaderValue1:\s*(\w+)', text)
+            if m:
+                TENANT_ID = m.group(1).strip()
+                print(f"INFO: Tenant autodetected from grafana-values.yaml: {TENANT_ID}", file=sys.stderr)
+        except Exception as e:
+            print(f"WARN: tenant autodetect failed: {e}", file=sys.stderr)
+if not TENANT_ID:
+    TENANT_ID = "primary"
+    print("INFO: Using default tenant 'primary' (no env and no grafana-values match)", file=sys.stderr)
 
 
 def _headers():
@@ -170,19 +188,38 @@ JVM_LIVE_SELECTOR = f'{{{BASE_MATCHER}}}'
 DB_SELECTOR = f'{{datname!~"template.*",datname=~"{DB_DATNAME_REGEX}"}}'
 
 
-def build_queries(window_seconds: int) -> Dict[str, str]:
+def build_queries(window_seconds: int, matcher: str = None) -> Dict[str, str]:
+    """Build primary queries given a base matcher (labels).
+
+    Primary targets are Micrometer http_server_requests_seconds_* metrics.
+    Some environments (legacy Micrometer or custom naming) still expose http_server_requests_milliseconds_*.
+    We keep primary queries on seconds_* and add explicit fallback logic later.
+    """
     w = window_seconds
+    m = matcher if matcher is not None else BASE_MATCHER
     return {
-        # Основная (как было до миграции) — используем milliseconds_*; если NaN, fallback ниже.
-        "latency_p95_ms": f"histogram_quantile(0.95, sum by (le) (rate(http_server_requests_milliseconds_bucket{{{BASE_MATCHER}}}[{w}s])))",
-        "rps_avg": f"sum(rate(http_server_requests_milliseconds_count{{{BASE_MATCHER}}}[{w}s]))",
-        "_errors": f"sum(rate(http_server_requests_milliseconds_count{{{BASE_MATCHER},status=~\"5..\"}}[{w}s]))",
-        "_total": f"sum(rate(http_server_requests_milliseconds_count{{{BASE_MATCHER}}}[{w}s]))",
+        # p95 latency (seconds histogram -> convert to ms)
+        "latency_p95_ms": f"1000 * histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{{{m}}}[{w}s])))",
+        # average requests per second
+        "rps_avg": f"sum(rate(http_server_requests_seconds_count{{{m}}}[{w}s]))",
+        "_errors": f"sum(rate(http_server_requests_seconds_count{{{m},status=~\"5..\"}}[{w}s]))",
+        "_total": f"sum(rate(http_server_requests_seconds_count{{{m}}}[{w}s]))",
         "db_tps_avg": f"sum(rate(pg_stat_database_xact_commit{DB_SELECTOR}[{w}s]) + rate(pg_stat_database_xact_rollback{DB_SELECTOR}[{w}s]))",
     }
 
 
+# Dynamic series discovery & regex relaxation removed: root cause fixed and canonical metrics chosen.
+
+
 def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, float, str]]:
+    # Быстрая проверка что PROM_URL действительно Prometheus/Mimir API, а не просто /metrics экспортер.
+    try:
+        _ = prom_instant_query(prom_url, "up")  # неважно что вернет; важен успех запроса
+    except Exception as api_e:
+        print(f"ERROR: Endpoint {prom_url} не выглядит как Prometheus API (/api/v1/query недоступен): {api_e}", file=sys.stderr)
+        print("HINT: Используйте базовый URL Mimir, напр. http://<mimir-service>:9009/prometheus", file=sys.stderr)
+        # Продолжаем чтобы сформировать метрики с нулями, но помечаем.
+        os.environ["_PROM_API_FAILED"] = "true"
     window_seconds = end - start
     queries = build_queries(window_seconds)
     metrics: Dict[str, Tuple[float, str]] = {}
@@ -193,7 +230,7 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
         print(f"INFO: Using query timestamp {query_ts} (offset -{offset_sec}s from end)", file=sys.stderr)
 
     # Execute queries
-    http_samples_detected = False
+    http_samples_detected = False  # retained for potential future diagnostics
     for name, q in queries.items():
         if name.startswith("_"):
             continue
@@ -213,7 +250,7 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
         if name == "rps_avg" and not math.isnan(value) and value > 0:
             http_samples_detected = True
 
-    # Error rate needs errors/total
+    # Capture raw total for later logic
     try:
         errors = prom_instant_query(prom_url, queries["_errors"], ts=query_ts)
     except Exception as e:
@@ -225,44 +262,66 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
         print(f"WARN: _total query failed: {e}", file=sys.stderr)
         total = float("nan")
 
+    # Dynamic selector relaxation removed. Simpler fallback retained below.
+
+    # Error rate needs errors/total (computed above, possibly replaced)
     error_pct = safe_percent(errors, total)
     metrics["error_rate_percent"] = (error_pct, "percent")
 
     # Track whether there was any traffic (total requests > 0)
     # traffic_present / jvm / cpu убраны как не требуемые для dashboard
 
-    # ----- Fallback chains (минимально необходимые) -----
-    # latency: если milliseconds_* отсутствуют, пробуем seconds_bucket и duration_seconds_bucket
+    # ----- Minimal fallback chains -----
+    # latency: seconds_* -> milliseconds_* -> duration_seconds_* fallback chain
     lat_val, lat_unit = metrics["latency_p95_ms"]
-    if math.isnan(lat_val):
-        for expr in [
-            f"histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{{{BASE_MATCHER}}}[{window_seconds}s])))",
-            f"histogram_quantile(0.95, sum by (le) (rate(http_server_requests_duration_seconds_bucket{{{BASE_MATCHER}}}[{window_seconds}s])))",
-        ]:
-            try:
-                v = prom_instant_query(prom_url, expr, ts=query_ts)
-                if not math.isnan(v):
-                    metrics["latency_p95_ms"] = (v * 1000.0, lat_unit)
-                    print("INFO: latency fallback success (seconds buckets)", file=sys.stderr)
-                    break
-            except Exception as e:
-                print(f"WARN: latency fallback expr failed: {e}", file=sys.stderr)
+    if math.isnan(lat_val) or lat_val == 0.0:
+        # Try milliseconds bucket naming
+        expr_ms = f"1000 * histogram_quantile(0.95, sum by (le) (rate(http_server_requests_milliseconds_bucket{{{BASE_MATCHER}}}[{window_seconds}s])))"
+        try:
+            v_ms = prom_instant_query(prom_url, expr_ms, ts=query_ts)
+            if not math.isnan(v_ms) and v_ms > 0:
+                metrics["latency_p95_ms"] = (v_ms, lat_unit)
+                print("INFO: latency fallback success (milliseconds_bucket)", file=sys.stderr)
+            else:
+                # Try duration_seconds bucket
+                expr_dur = f"1000 * histogram_quantile(0.95, sum by (le) (rate(http_server_requests_duration_seconds_bucket{{{BASE_MATCHER}}}[{window_seconds}s])))"
+                v_dur = prom_instant_query(prom_url, expr_dur, ts=query_ts)
+                if not math.isnan(v_dur) and v_dur > 0:
+                    metrics["latency_p95_ms"] = (v_dur, lat_unit)
+                    print("INFO: latency fallback success (duration_seconds_bucket)", file=sys.stderr)
+        except Exception as e:
+            print(f"WARN: latency fallback attempts failed: {e}", file=sys.stderr)
 
-    # rps: fallback на seconds/duration_seconds count если milliseconds_* отсутствуют
+    # rps: seconds_count -> milliseconds_count -> duration_seconds_count fallback chain
     rps_val, _ = metrics["rps_avg"]
-    if math.isnan(rps_val):
-        for expr in [
-            f"sum(rate(http_server_requests_seconds_count{{{BASE_MATCHER}}}[{window_seconds}s]))",
-            f"sum(rate(http_server_requests_duration_seconds_count{{{BASE_MATCHER}}}[{window_seconds}s]))",
-        ]:
-            try:
-                v = prom_instant_query(prom_url, expr, ts=query_ts)
-                if not math.isnan(v):
-                    metrics["rps_avg"] = (v, "requests_per_second")
-                    print("INFO: rps_avg fallback success (seconds count)", file=sys.stderr)
-                    break
-            except Exception as e:
-                print(f"WARN: rps fallback expr failed: {e}", file=sys.stderr)
+    if math.isnan(rps_val) or rps_val == 0.0:
+        expr_ms = f"sum(rate(http_server_requests_milliseconds_count{{{BASE_MATCHER}}}[{window_seconds}s]))"
+        try:
+            v_ms = prom_instant_query(prom_url, expr_ms, ts=query_ts)
+            if not math.isnan(v_ms) and v_ms > 0:
+                metrics["rps_avg"] = (v_ms, "requests_per_second")
+                print("INFO: rps_avg fallback success (milliseconds_count)", file=sys.stderr)
+            else:
+                expr_dur = f"sum(rate(http_server_requests_duration_seconds_count{{{BASE_MATCHER}}}[{window_seconds}s]))"
+                v_dur = prom_instant_query(prom_url, expr_dur, ts=query_ts)
+                if not math.isnan(v_dur) and v_dur > 0:
+                    metrics["rps_avg"] = (v_dur, "requests_per_second")
+                    print("INFO: rps_avg fallback success (duration_seconds_count)", file=sys.stderr)
+        except Exception as e:
+            print(f"WARN: rps fallback attempts failed: {e}", file=sys.stderr)
+
+    # error rate recomputation if primary errors/total were NaN (derive from milliseconds if needed)
+    err_val_current, _ = metrics["error_rate_percent"]
+    if math.isnan(err_val_current):
+        try:
+            errors_ms = prom_instant_query(prom_url, f"sum(rate(http_server_requests_milliseconds_count{{{BASE_MATCHER},status=~\"5..\"}}[{window_seconds}s]))", ts=query_ts)
+            total_ms = prom_instant_query(prom_url, f"sum(rate(http_server_requests_milliseconds_count{{{BASE_MATCHER}}}[{window_seconds}s]))", ts=query_ts)
+            err_pct_ms = safe_percent(errors_ms, total_ms)
+            if not math.isnan(err_pct_ms):
+                metrics["error_rate_percent"] = (err_pct_ms, "percent")
+                print("INFO: error_rate_percent fallback success (milliseconds_count)", file=sys.stderr)
+        except Exception as e:
+            print(f"WARN: error rate milliseconds fallback failed: {e}", file=sys.stderr)
 
     # Убраны fallback для JVM и CPU — не требуются
 
@@ -301,6 +360,8 @@ def compute_metrics(prom_url: str, start: int, end: int) -> List[Tuple[str, floa
             print(f"INFO: inserted zeros for previously NaN metrics: {', '.join(skipped)}", file=sys.stderr)
         else:
             print(f"INFO: skipping NaN metrics (not inserted): {', '.join(skipped)}", file=sys.stderr)
+    if os.getenv("_PROM_API_FAILED") == "true":
+        print("WARN: Все значения установлены в 0/NaN из-за отсутствия доступа к API. Проверьте PROM_URL.", file=sys.stderr)
     return rows
 
 
@@ -407,31 +468,39 @@ def main():
     if end_ts <= start_ts:
         print("END_TS must be > START_TS", file=sys.stderr)
         sys.exit(1)
+    dry_run = os.getenv("DRY_RUN", "false").lower() in ("1","true","yes")
 
-    raw_prom_url = env("PROM_URL", required=True).rstrip('/')
+    raw_prom_url = env("PROM_URL", "http://mimir.monitoring.svc.cluster.local:9009/prometheus").rstrip('/')
     # Auto-detect presence/absence of /prometheus prefix.
     # Try raw first; if buildinfo 404, try with /prometheus; if both fail leave as is (will error later).
     def _try_buildinfo(base: str) -> int:
+        """Проверка доступности Prometheus API через /api/v1/status/buildinfo.
+        Возвращает HTTP статус или -1 если таймаут/ошибка.
+        """
         try:
-            resp = requests.get(f"{base}/api/v1/status/buildinfo", headers=_headers(), timeout=5)
+            resp = requests.get(f"{base}/api/v1/status/buildinfo", headers=_headers(), timeout=float(os.getenv("PROM_BUILDINFO_TIMEOUT","3")))
             return resp.status_code
-        except Exception:
+        except Exception as e:
             return -1
     # Wait up to readiness_wait seconds for buildinfo to become available (handles race right after port-forward)
-    readiness_wait = int(os.getenv("PROM_READINESS_WAIT", "15"))
+    readiness_wait = int(os.getenv("PROM_READINESS_WAIT", "10"))
     deadline = time.time() + readiness_wait
-    status_raw = _try_buildinfo(raw_prom_url)
-    while status_raw not in (200, 404) and time.time() < deadline:
-        time.sleep(1)
-        status_raw = _try_buildinfo(raw_prom_url)
+    skip_buildinfo = os.getenv("PROM_SKIP_BUILDINFO","false").lower() in ("1","true","yes")
+    status_raw = -1 if skip_buildinfo else _try_buildinfo(raw_prom_url)
+    if skip_buildinfo:
+        print("INFO: PROM_SKIP_BUILDINFO=true -> пропускаем проверку /status/buildinfo", file=sys.stderr)
+    else:
+        while status_raw not in (200, 404) and time.time() < deadline:
+            time.sleep(1)
+            status_raw = _try_buildinfo(raw_prom_url)
     prom_url = raw_prom_url
-    if status_raw == 404:
+    if not skip_buildinfo and status_raw == 404:
         alt = raw_prom_url + "/prometheus"
         status_alt = _try_buildinfo(alt)
         if status_alt == 200:
             prom_url = alt
             print(f"INFO: Added /prometheus prefix (raw buildinfo 404, alt OK)", file=sys.stderr)
-    elif status_raw != 200:
+    elif not skip_buildinfo and status_raw != 200:
         # Try alt anyway if raw not 200
         alt = raw_prom_url + "/prometheus"
         status_alt = _try_buildinfo(alt)
@@ -440,6 +509,29 @@ def main():
             print(f"INFO: Using /prometheus prefix (raw status {status_raw})", file=sys.stderr)
         else:
             print(f"WARN: Buildinfo check failed raw={status_raw} alt={status_alt}", file=sys.stderr)
+    if skip_buildinfo:
+        # Не знаем жив ли API, просто используем предоставленный URL.
+        prom_url = raw_prom_url
+        print(f"INFO: Using provided PROM_URL without buildinfo verification: {prom_url}", file=sys.stderr)
+
+    # If initial prom_url still not healthy and matches default AND grafana-values.yaml exists, try parse URL from it
+    if status_raw not in (200,404):
+        gv_path = os.path.join(os.getcwd(), "ansible_grafana/roles/deploy_grafana/files/grafana-values.yaml")
+        if os.path.isfile(gv_path):
+            try:
+                import re
+                with open(gv_path,'r') as f:
+                    text = f.read()
+                m = re.search(r'url:\s*(http://[^\n]+/prometheus)', text)
+                if m:
+                    candidate = m.group(1).strip()
+                    if candidate != raw_prom_url:
+                        test_status = _try_buildinfo(candidate)
+                        if test_status in (200,404):
+                            prom_url = candidate
+                            print(f"INFO: Fallback PROM_URL from grafana-values.yaml: {candidate}", file=sys.stderr)
+            except Exception as e:
+                print(f"WARN: grafana-values fallback failed: {e}", file=sys.stderr)
 
     git_commit = env("GIT_COMMIT", "")
     git_branch = env("GIT_BRANCH", "")
@@ -483,14 +575,18 @@ def main():
         except Exception as de:
             print(f"DIAG ERROR: series discovery failed: {de}", file=sys.stderr)
 
-    pg_conn = psycopg2.connect(
-        host=env("PG_HOST", "localhost"),
-        port=int(env("PG_PORT", "15432")),
-        dbname=env("PG_DB", "perf_agg"),
-        user=env("PG_USER", "agg_user"),
-        password=env("PG_PASSWORD", "agg_pass"),
-        connect_timeout=10,
-    )
+    pg_conn = None
+    if not dry_run:
+        pg_conn = psycopg2.connect(
+            host=env("PG_HOST", "localhost"),
+            port=int(env("PG_PORT", "15432")),
+            dbname=env("PG_DB", "perf_agg"),
+            user=env("PG_USER", "agg_user"),
+            password=env("PG_PASSWORD", "agg_pass"),
+            connect_timeout=10,
+        )
+    else:
+        print("INFO: DRY_RUN enabled -> пропускаем подключение к Postgres и запись", file=sys.stderr)
 
     print(f"Computing metrics for run_id={run_id} window={start_ts}->{end_ts} ({end_ts-start_ts}s) prom_url={prom_url}")
     metrics = compute_metrics(prom_url, start_ts, end_ts)
@@ -510,8 +606,11 @@ def main():
     for m, v, u in sorted(metrics):
         print(f"  {m}: {v} {u}")
 
-    upsert_run_and_metrics(pg_conn, run_id, start_ts, end_ts, git_commit, git_branch, metrics)
-    print("Persisted metrics successfully.")
+    if not dry_run and pg_conn is not None:
+        upsert_run_and_metrics(pg_conn, run_id, start_ts, end_ts, git_commit, git_branch, metrics)
+        print("Persisted metrics successfully.")
+    else:
+        print("INFO: DRY_RUN - результаты не сохранены в БД", file=sys.stderr)
 
     # Optional JSON output for CI artifact
     summary = {m: v for m, v, _ in metrics}

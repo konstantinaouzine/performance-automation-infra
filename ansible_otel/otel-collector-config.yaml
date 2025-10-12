@@ -22,6 +22,42 @@ receivers:
           scrape_interval: 15s
           static_configs:
             - targets: ['jmeter-loadgen.load.svc.cluster.local:9270']
+        - job_name: 'springboot-app'
+          scrape_interval: 15s
+          metrics_path: /actuator/prometheus
+          scheme: http
+          kubernetes_sd_configs:
+            - role: pod
+              namespaces:
+                names: ['app']
+          relabel_configs:
+            # Keep only pods with label app=springboot-app
+            - source_labels: [__meta_kubernetes_pod_label_app]
+              action: keep
+              regex: springboot-app
+            # Normalize job label (remove namespace prefix that appears in Mimir as app/springboot-app)
+            - target_label: job
+              replacement: springboot-app
+              action: replace
+            # Map pod label app -> application for our PromQL
+            - source_labels: [__meta_kubernetes_pod_label_app]
+              target_label: application
+              action: replace
+            # Namespace label (optional but useful)
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: kubernetes_namespace
+              action: replace
+          metric_relabel_configs:
+            # Drop self-scrape actuator requests to reduce noise
+            - source_labels: [uri]
+              regex: /actuator/prometheus
+              action: drop
+            # Drop OpenTelemetry scope labels (not needed for dashboards)
+            - regex: otel_scope_name|otel_scope_version|otel_scope_schema_url
+              action: labeldrop
+            # Drop duplicate exported_application label (we retain application)
+            - regex: exported_application
+              action: labeldrop
   hostmetrics:
     collection_interval: 60s
     scrapers:
@@ -41,12 +77,15 @@ processors:
   batch: {}
   resource:
     attributes:
+      # Keep service.name only if missing to avoid overwriting existing scrape labels
       - key: service.name
-        action: upsert
+        action: insert
         value: springboot-app
 exporters:
+  prometheus:
+    endpoint: "0.0.0.0:9999"
+    metric_expiration: 5m
   otlp:
-    # Fixed: previous DNS name did not exist (NXDOMAIN). Use actual Service name shown by kubectl get svc.
     endpoint: "otel-collector-gateway-opentelemetry-collector.monitoring.svc.cluster.local:4317"
     tls:
       insecure: true
@@ -59,4 +98,4 @@ service:
     metrics:
       receivers: [prometheus, hostmetrics, otlp]
       processors: [resource, batch]
-      exporters: [otlp, debug]
+      exporters: [prometheus, otlp, debug]

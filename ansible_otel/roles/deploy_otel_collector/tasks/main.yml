@@ -15,3 +15,42 @@
 
 - name: Create/Update otel-agent Service
   import_tasks: service.yml
+
+# RBAC for Prometheus scraping of springboot-app pods in namespace 'app'
+# Assumption: service account name created by Helm chart is 'otel-collector-ds-opentelemetry-collector'.
+# If chart version changes SA naming, adjust variable below.
+- name: Set fact for collector service account name (can override via extra vars)
+  ansible.builtin.set_fact:
+    otel_collector_sa: "{{ otel_collector_service_account | default('otel-collector-ds-opentelemetry-collector') }}"
+
+- name: Ensure Role allowing pod/service/endpoints list/watch for springboot-app scraping
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: otel-prometheus-scrape
+        namespace: app
+      rules:
+        - apiGroups: [""]
+          resources: ["pods", "endpoints", "services"]
+          verbs: ["get", "list", "watch"]
+
+- name: Ensure RoleBinding linking collector SA to scrape Role
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: otel-prometheus-scrape-binding
+        namespace: app
+      subjects:
+        - kind: ServiceAccount
+          name: "{{ otel_collector_sa }}"
+          namespace: monitoring
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: otel-prometheus-scrape
