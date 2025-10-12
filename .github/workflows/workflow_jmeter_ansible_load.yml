@@ -127,6 +127,14 @@ jobs:
         id: ansible_run
         run: |
           set -e
+          # Ensure we build into the same Docker daemon that the cluster (minikube) uses.
+          if command -v minikube >/dev/null 2>&1; then
+            echo "Activating minikube docker-env for image build"
+            eval $(minikube docker-env)
+            docker info -f 'Docker server: {{.ServerVersion}} {{.OperatingSystem}}' || true
+          else
+            echo "minikube not found; building image in default docker context (must be shared with cluster)"
+          fi
           TEST_FILE="${{ github.event.inputs.test_file }}"
           if [[ "$TEST_FILE" != *.jmx ]]; then TEST_FILE="${TEST_FILE}.jmx"; fi
           mkdir -p "$LOGS_DIR"
@@ -160,6 +168,9 @@ jobs:
           ansible-playbook ansible_jmeter/jmeter_play.yml \
             -e jmeter_test_file="$TEST_FILE" \
             -e jmeter_local_logs_dir="$LOGS_DIR" $EXTRA_VARS || { echo 'Playbook failed'; exit 1; }
+          # After build we expect image jmeter-loadgen:<timestamp>. Verify presence.
+          echo "Verifying built JMeter images (latest 5):"
+          docker images | grep -E '^jmeter-loadgen' | head -5 || echo 'No local jmeter-loadgen images found'
           echo 'After playbook directory tree:'
           find "$LOGS_DIR" -maxdepth 2 -type f -name run.meta -printf 'META %p\n' || true
 

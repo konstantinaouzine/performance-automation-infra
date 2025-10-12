@@ -23,3 +23,22 @@
     source: build
     state: present
     force_source: true
+
+- name: Ensure image visible inside minikube when driver != docker
+  shell: |
+    set -e
+    if command -v minikube >/dev/null 2>&1; then
+      DRIVER=$(minikube profile list -o json 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("valid", [{}])[0].get("Config", {}).get("Driver", "unknown"))' || echo unknown)
+      echo "[INFO] Minikube driver detected: $DRIVER"
+      if [ "$DRIVER" != "docker" ]; then
+        echo "[INFO] Loading image {{ jmeter_image_name }}:{{ jmeter_image_tag }} into minikube (driver $DRIVER)"
+        minikube image load {{ jmeter_image_name }}:{{ jmeter_image_tag }} || echo "[WARN] minikube image load failed"
+      else
+        echo "[INFO] Docker driver; image already accessible"
+      fi
+    else
+      echo "[INFO] minikube not installed; skipping image load"
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
