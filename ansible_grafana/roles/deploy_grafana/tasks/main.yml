@@ -1,14 +1,26 @@
----
+- name: Ensure Grafana admin password fact
+  set_fact:
+    grafana_admin_password: "grafanaadmin"
+
 - name: Add Grafana Helm repo
   community.kubernetes.helm_repository:
     name: grafana
     repo_url: https://grafana.github.io/helm-charts
 
-- name: Install Grafana via Helm
+- name: Deploy / Upgrade Grafana (idempotent)
   community.kubernetes.helm:
     name: grafana
     chart_ref: grafana/grafana
     release_namespace: monitoring
     create_namespace: true
+    state: present
     values_files:
       - '{{ role_path }}/files/grafana-values.yaml'
+
+- name: Deployment note
+  debug:
+    msg: >-
+      Grafana deployed (minimal POC). Для полной очистки persistent данных:
+      ansible-playbook -i inventory.ini playbook_grafana.yml -t grafana-reset -e grafana_reset=true
+      Затем повторно выполните обычный деплой.###################################################################################################
+# MINIMAL GRAFANA DEPLOY ROLE TASKS (POC)

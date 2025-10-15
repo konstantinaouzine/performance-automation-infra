@@ -462,11 +462,18 @@ jobs:
         if: ${{ !cancelled() && steps.ansible_run.outcome == 'success' }}
         run: |
           set -euo pipefail
-          GRAFANA_URL_PRESET='${GRAFANA_URL:-}'
+          # IMPORTANT: Use double quotes for runtime env var expansion. (Bug fix: previously single quotes prevented expansion)
+          GRAFANA_URL_PRESET="${GRAFANA_URL:-}"
           if [ -n "${GRAFANA_URL_PRESET}" ]; then
-            echo "Preset GRAFANA_URL provided -> skip port-forward";
-            echo "grafana_url=${GRAFANA_URL_PRESET}" >> $GITHUB_OUTPUT
-            exit 0;
+            echo "Preset GRAFANA_URL provided (len=${#GRAFANA_URL_PRESET}) -> attempting to verify reachability before deciding to skip port-forward";
+            # Quick health probe (no auth needed for /api/health). Use 3s timeout.
+            if curl -sk --max-time 3 "$GRAFANA_URL_PRESET/api/health" >/dev/null 2>&1; then
+              echo "Reachable Grafana at preset URL -> skip port-forward";
+              echo "grafana_url=${GRAFANA_URL_PRESET}" >> $GITHUB_OUTPUT
+              exit 0;
+            else
+              echo "Preset GRAFANA_URL not reachable, proceeding to establish port-forward fallback";
+            fi
           fi
           # Determine namespace & service (defaults)
           NS=${GRAFANA_NAMESPACE:-monitoring}
@@ -502,6 +509,20 @@ jobs:
             GRAFANA_URL='${{ steps.grafana_pf.outputs.grafana_url }}'
           else
             GRAFANA_URL="$GRAFANA_URL_PRESET"
+          fi
+          # Fallback: if initial URL unreachable, try port-forward output (if different / set)
+          ALT_URL='${{ steps.grafana_pf.outputs.grafana_url }}'
+          if [ -n "${GRAFANA_URL}" ]; then
+            if ! curl -sk --max-time 4 "${GRAFANA_URL}/api/health" >/dev/null 2>&1; then
+              echo "Primary Grafana URL not reachable: ${GRAFANA_URL} (will try fallback)"
+              if [ -n "${ALT_URL}" ] && [ "${ALT_URL}" != "${GRAFANA_URL}" ]; then
+                if curl -sk --max-time 5 "${ALT_URL}/api/health" >/dev/null 2>&1; then
+                  echo "Switching to fallback Grafana URL: ${ALT_URL}"; GRAFANA_URL="${ALT_URL}";
+                else
+                  echo "Fallback Grafana URL also unreachable (${ALT_URL})"
+                fi
+              fi
+            fi
           fi
           GRAFANA_SPECS="${GRAFANA_SPECS:-}"
           echo "(debug) Raw GRAFANA_SPECS=$GRAFANA_SPECS"
@@ -553,7 +574,8 @@ jobs:
                 # If the dashboard is heavy (e.g., app-perf) try fallback: render subset of key panels
                 if [ "$uid" = "app-perf" ]; then
                   echo "Fallback: rendering key panels for $uid"
-                  KEY_PANELS="101,104,111,141,151"
+                  # Updated fallback set (removed obsolete panel 151 after dashboard refactor)
+                  KEY_PANELS="101,104,111,141"
                   IFS=',' read -ra KP <<< "$KEY_PANELS"
                   for kp in "${KP[@]}"; do
                     kp=$(echo "$kp"|xargs)
