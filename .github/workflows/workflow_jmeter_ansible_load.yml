@@ -65,6 +65,7 @@ jobs:
           echo "Demo: loading database data"
 
   run-ansible-jmeter:
+    name: Performance Test Execution
     needs: load-db-data
     runs-on: [self-hosted, ansible, jmeter]
     timeout-minutes: 40
