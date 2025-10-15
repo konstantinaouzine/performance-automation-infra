@@ -47,7 +47,25 @@ on:
       # (Demo) Live dump inputs removed to stay within 10-input GitHub limit
 
 jobs:
+  enable-exporters:
+    name: Enable exporters (demo)
+    runs-on: [self-hosted]
+    steps:
+      - name: Enable exporters placeholder
+        run: |
+          echo "Demo: enabling exporters"
+
+  load-db-data:
+    name: Load DB data (demo)
+    runs-on: [self-hosted]
+    needs: enable-exporters
+    steps:
+      - name: Load DB data placeholder
+        run: |
+          echo "Demo: loading database data"
+
   run-ansible-jmeter:
+    needs: load-db-data
     runs-on: [self-hosted, ansible, jmeter]
     timeout-minutes: 40
     env:
@@ -826,3 +844,12 @@ jobs:
 
       - name: Finish
         run: echo "Done."
+
+  disable-exporters:
+    name: Disable exporters (demo)
+    runs-on: [self-hosted]
+    needs: run-ansible-jmeter
+    steps:
+      - name: Disable exporters placeholder
+        run: |
+          echo "Demo: disabling exporters"
