@@ -551,8 +551,20 @@ jobs:
             fi
             echo "Processing dashboard $uid"
             # Get slug
-            DASH_JSON=$(curl -sf -H "$authHeader" "$GRAFANA_URL/api/dashboards/uid/$uid" || true)
-            if [ -z "$DASH_JSON" ]; then echo "Failed to fetch dashboard $uid"; continue; fi
+            TMP_RESP=$(mktemp)
+            HTTP_CODE=$(curl -s -o "$TMP_RESP" -w '%{http_code}' -H "$authHeader" "$GRAFANA_URL/api/dashboards/uid/$uid" || echo 000)
+            if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+              echo "Failed to fetch dashboard $uid (HTTP $HTTP_CODE)"
+              if [ -s "$TMP_RESP" ]; then
+                echo "--- response snippet (first 300 bytes) ---"
+                head -c 300 "$TMP_RESP" | sed 's/[^[:print:]]/./g'
+                echo; echo "--- end snippet ---"
+              fi
+              rm -f "$TMP_RESP"
+              continue
+            fi
+            DASH_JSON=$(cat "$TMP_RESP")
+            rm -f "$TMP_RESP"
             slug=$(echo "$DASH_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin);print(d.get("meta",{}).get("slug","dashboard"))')
             if [ -z "$panels_part" ]; then
               # Full dashboard render with simple retry (up to 3 attempts)
